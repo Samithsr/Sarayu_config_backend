@@ -4,12 +4,12 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "aedes": "^0.51.3",
     "bcryptjs": "^3.0.2",
@@ -20,5 +20,16 @@
     "mqtt": "^5.12.0",
     "net": "^1.0.2",
     "nodemon": "^3.1.10"
-  }
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Samithsr/Sarayu_Config_backend.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Samithsr/Sarayu_Config_backend/issues"
+  },
+  "homepage": "https://github.com/Samithsr/Sarayu_Config_backend#readme",
+  "description": ""
 }
