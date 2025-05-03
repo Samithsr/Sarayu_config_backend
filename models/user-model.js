@@ -6,12 +6,12 @@ const userSchema = new mongoose.Schema(
   {
     email: {
       type: String,
-      required: [true, "email is required"],
+      required: [true, "Email is required"],
       unique: true,
     },
     password: {
       type: String,
-      required: [true, "password is required"],
+      required: [true, "Password is required"],
     },
   },
   {
@@ -29,16 +29,13 @@ userSchema.pre("save", async function (next) {
   next();
 });
 
-
 userSchema.methods.generateToken = function () {
-  return jwt.sign({ id: this._id }, "x-auth-token", {
+  return jwt.sign({ _id: this._id, email: this.email }, "x-auth-token", {
     expiresIn: "3d",
   });
 };
 
 userSchema.methods.verifypass = async function (userEnteredPass) {
-  console.log("userEnteredPass",userEnteredPass)
-  console.log(await bcryptjs.compare(userEnteredPass, this.password))
   return await bcryptjs.compare(userEnteredPass, this.password);
 };
 

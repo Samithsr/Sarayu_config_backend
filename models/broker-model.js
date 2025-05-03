@@ -1,4 +1,3 @@
-// models/broker-model.js
 const mongoose = require("mongoose");
 
 const BrokerSchema = new mongoose.Schema({
@@ -7,20 +6,23 @@ const BrokerSchema = new mongoose.Schema({
     required: [true, "Broker IP is required"],
   },
   portNumber: {
-    type: String,
-    required: [true, "Port number is required"],
+    type: Number,
+    default: 1883,
   },
   username: {
     type: String,
-    required: [true, "Username is required"],
   },
   password: {
     type: String,
-    required: [true, "Password is required"],
   },
-  label:{
+  label: {
     type: String,
-    required: [true, "label is required"],
+    required: [true, "Label is required"],
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: [true, "User ID is required"],
   }
 }, { timestamps: true });
 
