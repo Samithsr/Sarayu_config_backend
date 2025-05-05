@@ -1,0 +1,83 @@
+const mqtt = require("mqtt");
+
+class MqttHandler {
+  constructor(socket, userId, broker) {
+    this.socket = socket;
+    this.userId = userId;
+    this.broker = broker;
+    this.client = null;
+    this.clientId = `server_${userId}_${broker._id}`;
+    this.brokerUrl = `mqtt://${broker.brokerIp}:1883`;
+  }
+
+  connect() {
+    const options = {
+      clientId: this.clientId,
+      username: this.broker.username || "",
+      password: this.broker.password || "",
+      reconnectPeriod: 1000, // Reconnect every 1 second if disconnected
+      connectTimeout: 30 * 1000, // 30 seconds timeout
+    };
+
+    console.log(`Attempting to connect to MQTT broker at ${this.brokerUrl}`);
+    this.client = mqtt.connect(this.brokerUrl, options);
+
+    this.client.on("connect", () => {
+      console.log(`MQTT connected to ${this.broker.brokerIp}:1883 for user ${this.userId}`);
+      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: "connected" });
+    });
+
+    this.client.on("message", (topic, message) => {
+      console.log(`Received MQTT message on topic ${topic}: ${message.toString()}`);
+      this.socket.emit("mqtt_message", {
+        topic,
+        message: message.toString(),
+        brokerId: this.broker._id,
+      });
+    });
+
+    this.client.on("error", (err) => {
+      console.error(`MQTT error for ${this.broker.brokerIp}:1883:`, err.message);
+      this.socket.emit("error", {
+        message: `MQTT error: ${err.message}`,
+        brokerId: this.broker._id,
+      });
+    });
+
+    this.client.on("close", () => {
+      console.log(`MQTT disconnected from ${this.broker.brokerIp}:1883`);
+      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: "disconnected" });
+    });
+  }
+
+  subscribe(topic) {
+    if (this.client && this.client.connected) {
+      this.client.subscribe(topic, { qos: 0 }, (err) => {
+        if (err) {
+          console.error(`Subscription error for topic ${topic}:`, err.message);
+          this.socket.emit("error", {
+            message: `Subscription error: ${err.message}`,
+            brokerId: this.broker._id,
+          });
+        } else {
+          console.log(`Subscribed to ${topic} for user ${this.userId}`);
+          this.socket.emit("subscribed", { topic, brokerId: this.broker._id });
+        }
+      });
+    } else {
+      this.socket.emit("error", {
+        message: "MQTT client not connected",
+        brokerId: this.broker._id,
+      });
+    }
+  }
+
+  disconnect() {
+    if (this.client) {
+      this.client.end();
+      console.log(`MQTT client ${this.clientId} disconnected`);
+    }
+  }
+}
+
+module.exports = MqttHandler;
