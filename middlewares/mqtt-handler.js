@@ -8,23 +8,37 @@ class MqttHandler {
     this.client = null;
     this.clientId = `server_${userId}_${broker._id}`;
     this.brokerUrl = `mqtt://${broker.brokerIp}:1883`;
+    this.connectionStatus = "disconnected";
+    this.retryAttempts = 0;
+    this.maxRetries = 5;
+    this.retryDelay = 1000; // Initial delay in ms
   }
 
   connect() {
+    if (this.connectionStatus === "connected" || this.connectionStatus === "connecting") {
+      console.log(`MQTT client ${this.clientId} already ${this.connectionStatus}`);
+      return;
+    }
+
+    this.connectionStatus = "connecting";
+    this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
+    console.log(`Attempting to connect to MQTT broker at ${this.brokerUrl}`);
+
     const options = {
       clientId: this.clientId,
       username: this.broker.username || "",
       password: this.broker.password || "",
-      reconnectPeriod: 1000, // Reconnect every 1 second if disconnected
+      reconnectPeriod: 0, // Disable auto-reconnect to manage retries manually
       connectTimeout: 30 * 1000, // 30 seconds timeout
     };
 
-    console.log(`Attempting to connect to MQTT broker at ${this.brokerUrl}`);
     this.client = mqtt.connect(this.brokerUrl, options);
 
     this.client.on("connect", () => {
+      this.connectionStatus = "connected";
+      this.retryAttempts = 0;
       console.log(`MQTT connected to ${this.broker.brokerIp}:1883 for user ${this.userId}`);
-      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: "connected" });
+      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
     });
 
     this.client.on("message", (topic, message) => {
@@ -42,12 +56,35 @@ class MqttHandler {
         message: `MQTT error: ${err.message}`,
         brokerId: this.broker._id,
       });
+      this.handleReconnect();
     });
 
     this.client.on("close", () => {
-      console.log(`MQTT disconnected from ${this.broker.brokerIp}:1883`);
-      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: "disconnected" });
+      if (this.connectionStatus !== "disconnected") {
+        this.connectionStatus = "disconnected";
+        console.log(`MQTT disconnected from ${this.broker.brokerIp}:1883`);
+        this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
+        this.handleReconnect();
+      }
     });
+  }
+
+  handleReconnect() {
+    if (this.retryAttempts >= this.maxRetries) {
+      console.error(`Max retry attempts reached for ${this.brokerUrl}`);
+      this.disconnect();
+      return;
+    }
+
+    this.retryAttempts++;
+    const delay = this.retryDelay * Math.pow(2, this.retryAttempts); // Exponential backoff
+    console.log(`Retrying connection to ${this.brokerUrl} in ${delay}ms (attempt ${this.retryAttempts})`);
+
+    setTimeout(() => {
+      if (this.connectionStatus === "disconnected") {
+        this.connect();
+      }
+    }, delay);
   }
 
   subscribe(topic) {
@@ -74,8 +111,11 @@ class MqttHandler {
 
   disconnect() {
     if (this.client) {
-      this.client.end();
+      this.connectionStatus = "disconnected";
+      this.client.end(true); // Force close
+      this.client = null;
       console.log(`MQTT client ${this.clientId} disconnected`);
+      this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
     }
   }
 }
