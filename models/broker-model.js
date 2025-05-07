@@ -23,7 +23,12 @@ const BrokerSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: [true, "User ID is required"],
-  }
+  },
+  connectionStatus: {
+    type: String,
+    enum: ['connected', 'disconnected', 'connecting', 'error'],
+    default: 'disconnected',
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Broker", BrokerSchema);

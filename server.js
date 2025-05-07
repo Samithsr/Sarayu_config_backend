@@ -29,6 +29,7 @@ app.use(cors({
 
 // MQTT Client Management
 const mqttHandlers = new Map(); // Store MQTT handlers per user and broker
+const userSockets = new Map(); // Track active sockets per user
 
 // Middleware to attach io and mqttHandlers to req
 app.use((req, res, next) => {
@@ -51,6 +52,22 @@ io.use(async (socket, next) => {
   try {
     const decoded = jwt.verify(token, "x-auth-token");
     socket.userId = decoded._id;
+
+    // Manage user sockets to prevent excessive connections
+    if (!userSockets.has(decoded._id)) {
+      userSockets.set(decoded._id, new Set());
+    }
+    const sockets = userSockets.get(decoded._id);
+    sockets.add(socket.id);
+
+    // Limit the number of connections per user (e.g., 5)
+    if (sockets.size > 5) {
+      const oldestSocketId = sockets.values().next().value;
+      io.to(oldestSocketId).emit("error", { message: "Too many connections. Closing oldest connection." });
+      io.sockets.sockets.get(oldestSocketId)?.disconnect(true);
+      sockets.delete(oldestSocketId);
+    }
+
     socket.join(decoded._id); // Join a room for the user
     next();
   } catch (error) {
@@ -72,53 +89,71 @@ io.on("connection", async (socket) => {
     brokers.forEach((broker) => {
       const key = `${socket.userId}_${broker._id}`;
       if (!mqttHandlers.has(key)) {
+        console.log(`Initializing MQTT handler for broker ${broker._id} for user ${socket.userId}`);
         const mqttHandler = new MqttHandler(socket, socket.userId, broker);
         mqttHandlers.set(key, mqttHandler);
         mqttHandler.connect();
       } else {
+        console.log(`Reconnecting existing MQTT handler for broker ${broker._id} for user ${socket.userId}`);
         mqttHandlers.get(key).connect();
       }
     });
   } catch (error) {
+    console.error(`Error initializing brokers for user ${socket.userId}: ${error.message}`);
     socket.emit("error", { message: `Failed to initialize brokers: ${error.message}` });
   }
 
   // Handle broker connection request from client
   socket.on("connect_broker", async ({ brokerId }) => {
     try {
+      console.log(`Received connect_broker request for broker ${brokerId} from user ${socket.userId}`);
       const broker = await Broker.findOne({ _id: brokerId, userId: socket.userId });
       if (!broker) {
+        console.error(`Broker ${brokerId} not found for user ${socket.userId}`);
         socket.emit("error", { message: "Broker not found", brokerId });
         return;
       }
       const key = `${socket.userId}_${brokerId}`;
       if (!mqttHandlers.has(key)) {
+        console.log(`Creating new MQTT handler for broker ${brokerId} for user ${socket.userId}`);
         const mqttHandler = new MqttHandler(socket, socket.userId, broker);
         mqttHandlers.set(key, mqttHandler);
         mqttHandler.connect();
       } else {
+        console.log(`Reconnecting MQTT handler for broker ${brokerId} for user ${socket.userId}`);
         mqttHandlers.get(key).connect();
       }
     } catch (error) {
+      console.error(`Failed to connect broker ${brokerId} for user ${socket.userId}: ${error.message}`);
       socket.emit("error", { message: `Failed to connect broker: ${error.message}`, brokerId });
     }
   });
 
   // Handle topic subscription from client
   socket.on("subscribe", ({ brokerId, topic }) => {
+    console.log(`Received subscribe request for topic ${topic} on broker ${brokerId} from user ${socket.userId}`);
     const mqttHandler = mqttHandlers.get(`${socket.userId}_${brokerId}`);
     if (mqttHandler) {
       mqttHandler.subscribe(topic);
     } else {
+      console.error(`MQTT handler not found for broker ${brokerId} for user ${socket.userId}`);
       socket.emit("error", { message: "MQTT handler not found", brokerId });
     }
   });
 
   socket.on("disconnect", () => {
     console.log(`Socket disconnected: ${socket.id} for user ${socket.userId}`);
+    const sockets = userSockets.get(socket.userId);
+    if (sockets) {
+      sockets.delete(socket.id);
+      if (sockets.size === 0) {
+        userSockets.delete(socket.userId);
+      }
+    }
     // Clean up MQTT handlers for this user
     mqttHandlers.forEach((handler, key) => {
       if (key.startsWith(`${socket.userId}_`)) {
+        console.log(`Disconnecting MQTT handler for ${key}`);
         handler.disconnect();
         mqttHandlers.delete(key);
       }
