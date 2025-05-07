@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const authRouter = require("./routers/auth-router");
 const brokerRouter = require("./routers/broker-router");
+const configRouter = require("./routers/config-router");
 const http = require("http");
 const { Server } = require("socket.io");
 const Broker = require("./models/broker-model");
@@ -26,9 +27,20 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 
+// MQTT Client Management
+const mqttHandlers = new Map(); // Store MQTT handlers per user and broker
+
+// Middleware to attach io and mqttHandlers to req
+app.use((req, res, next) => {
+  req.io = io;
+  req.mqttHandlers = mqttHandlers;
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api', brokerRouter);
+app.use('/api', configRouter);
 
 // Socket.IO Authentication Middleware
 io.use(async (socket, next) => {
@@ -39,17 +51,58 @@ io.use(async (socket, next) => {
   try {
     const decoded = jwt.verify(token, "x-auth-token");
     socket.userId = decoded._id;
+    socket.join(decoded._id); // Join a room for the user
     next();
   } catch (error) {
     next(new Error("Authentication error: Invalid token"));
   }
 });
 
-// MQTT Client Management
-const mqttHandlers = new Map(); // Store MQTT handlers per user and broker
-
 io.on("connection", async (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log(`Socket connected: ${socket.id} for user ${socket.userId}`);
+
+  // Fetch user's brokers and initiate MQTT connections
+  try {
+    const brokers = await Broker.find({ userId: socket.userId });
+    if (brokers.length === 0) {
+      socket.emit("error", { message: "No brokers found for this user" });
+      return;
+    }
+
+    brokers.forEach((broker) => {
+      const key = `${socket.userId}_${broker._id}`;
+      if (!mqttHandlers.has(key)) {
+        const mqttHandler = new MqttHandler(socket, socket.userId, broker);
+        mqttHandlers.set(key, mqttHandler);
+        mqttHandler.connect();
+      } else {
+        mqttHandlers.get(key).connect();
+      }
+    });
+  } catch (error) {
+    socket.emit("error", { message: `Failed to initialize brokers: ${error.message}` });
+  }
+
+  // Handle broker connection request from client
+  socket.on("connect_broker", async ({ brokerId }) => {
+    try {
+      const broker = await Broker.findOne({ _id: brokerId, userId: socket.userId });
+      if (!broker) {
+        socket.emit("error", { message: "Broker not found", brokerId });
+        return;
+      }
+      const key = `${socket.userId}_${brokerId}`;
+      if (!mqttHandlers.has(key)) {
+        const mqttHandler = new MqttHandler(socket, socket.userId, broker);
+        mqttHandlers.set(key, mqttHandler);
+        mqttHandler.connect();
+      } else {
+        mqttHandlers.get(key).connect();
+      }
+    } catch (error) {
+      socket.emit("error", { message: `Failed to connect broker: ${error.message}`, brokerId });
+    }
+  });
 
   // Handle topic subscription from client
   socket.on("subscribe", ({ brokerId, topic }) => {
@@ -62,7 +115,7 @@ io.on("connection", async (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`Socket disconnected: ${socket.id}`);
+    console.log(`Socket disconnected: ${socket.id} for user ${socket.userId}`);
     // Clean up MQTT handlers for this user
     mqttHandlers.forEach((handler, key) => {
       if (key.startsWith(`${socket.userId}_`)) {
@@ -78,10 +131,39 @@ mongoose
   .connect("mongodb://localhost:27017/gateway")
   .then(async () => {
     console.log("Database connection successful!");
-    server.listen(5000, () => {
-      console.log("Listening on port 5000");
+
+    // Try to listen on port 5000, handle EADDRINUSE
+    const PORT = 5000;
+    server.listen(PORT, () => {
+      console.log(`Listening on port ${PORT}`);
+    });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`Port ${PORT} is already in use. Please free the port or try a different one.`);
+        console.error(`To find the process using port ${PORT}, run: netstat -aon | findstr :${PORT}`);
+        console.error(`To terminate it, run: taskkill /PID <PID> /F`);
+        console.error(`Alternatively, restart the server to try again.`);
+        process.exit(1);
+      } else {
+        console.error(`Server error: ${err.message}`);
+        process.exit(1);
+      }
     });
   })
   .catch((err) => {
     console.error("Database connection failed:", err.message);
+    process.exit(1);
   });
+
+// Clean up on process exit
+process.on("SIGINT", () => {
+  console.log("Shutting down server...");
+  server.close(() => {
+    console.log("Server closed.");
+    mongoose.connection.close(false, () => {
+      console.log("MongoDB connection closed.");
+      process.exit(0);
+    });
+  });
+});
