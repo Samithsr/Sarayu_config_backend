@@ -126,11 +126,20 @@ class MqttHandler {
     });
 
     this.client.on("message", (topic, message) => {
-      console.log(`MQTT client ${this.clientId} received message on topic ${topic}: ${message.toString()} from ${this.brokerUrl}`);
+      const messageStr = message.toString();
+      console.log(`MQTT client ${this.clientId} received message on topic ${topic} from ${this.brokerUrl}:`);
+      console.log(`Message Content: ${messageStr}`);
+      console.log(`Broker ID: ${this.broker._id}, User ID: ${this.userId}`);
+      try {
+        const parsedMessage = JSON.parse(messageStr);
+        console.log('Parsed Message:', JSON.stringify(parsedMessage, null, 2));
+      } catch (e) {
+        console.log('Message is not JSON, treating as plain text');
+      }
       if (this.socket) {
         this.socket.emit("mqtt_message", {
           topic,
-          message: message.toString(),
+          message: messageStr,
           brokerId: this.broker._id,
         });
       }
@@ -246,6 +255,14 @@ class MqttHandler {
         this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
       }
     }
+  }
+
+  updateSocket(newSocket) {
+    this.socket = newSocket;
+  }
+
+  isConnected() {
+    return this.client && this.client.connected && this.connectionStatus === "connected";
   }
 }
 
