@@ -98,6 +98,11 @@ class MqttHandler {
       return;
     }
 
+
+
+
+
+    
     this.connectionStatus = "connecting";
     this.retryAttempts++;
     console.log(`MQTT client ${this.clientId} transitioning to ${this.connectionStatus} for ${this.brokerUrl} (attempt ${this.retryAttempts}/${this.maxRetries})`);
