@@ -6,7 +6,7 @@ class MqttHandler {
     this.userId = userId;
     this.broker = broker;
     this.client = null;
-    this.clientId = `server_${userId}_${broker._id}`;
+    this.clientId = `server_${userId}_${broker._id}_${Date.now()}`; // Added timestamp for uniqueness
     this.brokerUrl = `mqtt://${broker.brokerIp}:${broker.portNumber || 1883}`;
     this.connectionStatus = "disconnected";
     this.retryAttempts = 0;
@@ -98,11 +98,6 @@ class MqttHandler {
       return;
     }
 
-
-
-
-
-    
     this.connectionStatus = "connecting";
     this.retryAttempts++;
     console.log(`MQTT client ${this.clientId} transitioning to ${this.connectionStatus} for ${this.brokerUrl} (attempt ${this.retryAttempts}/${this.maxRetries})`);
@@ -220,25 +215,17 @@ class MqttHandler {
   }
 
   publish(topic, message) {
-    if (this.client && this.client.connected) {
-      console.log(`MQTT client ${this.clientId} publishing to topic ${topic} on ${this.brokerUrl}: ${message}`);
-      this.client.publish(topic, message, { qos: 0 }, (err) => {
-        if (err) {
-          console.error(`MQTT client ${this.clientId} publish error for topic ${topic} on ${this.brokerUrl}: ${err.message}`);
-          if (this.socket) {
-            this.socket.emit("error", {
-              message: `Publish error: ${err.message}`,
-              brokerId: this.broker._id,
-            });
-          }
-        } else {
-          console.log(`MQTT client ${this.clientId} successfully published to ${topic} for user ${this.userId} on ${this.brokerUrl}`);
-          if (this.socket) {
-            this.socket.emit("published", { topic, brokerId: this.broker._id });
-          }
-        }
-      });
-    } else {
+    if (!this.client) {
+      console.error(`MQTT client ${this.clientId} not initialized for ${this.brokerUrl}`);
+      if (this.socket) {
+        this.socket.emit("error", {
+          message: "MQTT client not initialized",
+          brokerId: this.broker._id,
+        });
+      }
+      return;
+    }
+    if (!this.client.connected) {
       console.error(`MQTT client ${this.clientId} cannot publish to ${topic}: not connected (status: ${this.connectionStatus}) for ${this.brokerUrl}`);
       if (this.socket) {
         this.socket.emit("error", {
@@ -246,7 +233,26 @@ class MqttHandler {
           brokerId: this.broker._id,
         });
       }
+      return;
     }
+    console.log(`MQTT client ${this.clientId} publishing to topic ${topic} on ${this.brokerUrl}:`);
+    console.log(`Message Content: ${message}`);
+    this.client.publish(topic, message, { qos: 0 }, (err) => {
+      if (err) {
+        console.error(`MQTT client ${this.clientId} publish error for topic ${topic} on ${this.brokerUrl}: ${err.message}`);
+        if (this.socket) {
+          this.socket.emit("error", {
+            message: `Publish error: ${err.message}`,
+            brokerId: this.broker._id,
+          });
+        }
+      } else {
+        console.log(`MQTT client ${this.clientId} successfully published to ${topic} for user ${this.userId} on ${this.brokerUrl}`);
+        if (this.socket) {
+          this.socket.emit("published", { topic, brokerId: this.broker._id });
+        }
+      }
+    });
   }
 
   disconnect() {
