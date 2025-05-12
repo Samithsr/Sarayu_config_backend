@@ -7,14 +7,17 @@ const MqttHandler = require("../middlewares/mqtt-handler");
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) {
+    console.error(`[User: Unknown] Unauthorized: No token provided`);
     return res.status(401).json({ message: "Unauthorized: No token provided" });
   }
   try {
     const decoded = jwt.verify(token, "x-auth-token");
     req.userId = decoded._id;
+    console.log(`[User: ${req.userId}] Authentication successful`);
     next();
   } catch (error) {
-    res.status(401).json({ message: "Unauthorized: Invalid token" });
+    console.error(`[User: Unknown] Unauthorized: Invalid token`);
+    return res.status(401).json({ message: "Unauthorized: Invalid token" });
   }
 };
 
@@ -27,13 +30,13 @@ const isValidIPv4 = (ip) => {
 router.post("/test-broker", auth, async (req, res) => {
   try {
     const { brokerIp, portNumber = 1883, username, password } = req.body;
-    console.log(`Testing broker availability for IP ${brokerIp}:${portNumber} for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Testing broker availability for IP ${brokerIp}:${portNumber}`);
     if (!brokerIp) {
-      console.error(`Broker IP missing for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker IP missing`);
       return res.status(400).json({ message: "Broker IP is required" });
     }
     if (!isValidIPv4(brokerIp)) {
-      console.error(`Invalid IP address ${brokerIp} for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
       return res.status(400).json({ message: "Invalid IP address format" });
     }
 
@@ -45,14 +48,14 @@ router.post("/test-broker", auth, async (req, res) => {
     });
     const isAvailable = await mqttHandler.testConnection(portNumber);
     if (!isAvailable) {
-      console.error(`Broker ${brokerIp}:${portNumber} is not available for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker ${brokerIp}:${portNumber} is not available`);
       return res.status(400).json({ message: "Broker is not available" });
     }
 
-    console.log(`Broker ${brokerIp}:${portNumber} is available for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Broker ${brokerIp}:${portNumber} is available`);
     res.status(200).json({ message: "Broker is available" });
   } catch (error) {
-    console.error(`Error testing broker for user ${req.userId}: ${error.message}`);
+    console.error(`[User: ${req.userId}] Error testing broker: ${error.message}`);
     res.status(400).json({
       message: "Failed to test broker",
       error: error.message,
@@ -63,17 +66,17 @@ router.post("/test-broker", auth, async (req, res) => {
 router.post("/brokers", auth, async (req, res) => {
   try {
     const { brokerIp, username, password, label, portNumber = 1883 } = req.body;
-    console.log(`Creating broker for user ${req.userId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
+    console.log(`[User: ${req.userId}] Creating broker with IP ${brokerIp}:${portNumber}, label: ${label}`);
     if (!brokerIp) {
-      console.error(`Broker IP missing for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker IP missing`);
       return res.status(400).json({ message: "Broker IP is required" });
     }
     if (!isValidIPv4(brokerIp)) {
-      console.error(`Invalid IP address ${brokerIp} for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
       return res.status(400).json({ message: "Invalid IP address format" });
     }
     if (!label) {
-      console.error(`Label missing for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Label missing`);
       return res.status(400).json({ message: "Label is required" });
     }
     const existingBroker = await Broker.findOne({
@@ -81,7 +84,7 @@ router.post("/brokers", auth, async (req, res) => {
       userId: req.userId,
     });
     if (existingBroker) {
-      console.error(`Broker with IP ${brokerIp} already exists for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker with IP ${brokerIp} already exists`);
       return res.status(400).json({ message: "Broker with this IP already exists" });
     }
     const broker = new Broker({
@@ -94,11 +97,11 @@ router.post("/brokers", auth, async (req, res) => {
       connectionStatus: "connecting",
     });
     await broker.save();
-    console.log(`Broker ${broker._id} created for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Broker ${broker._id} created with IP ${brokerIp}:${portNumber}`);
 
     // Initialize MQTT connection
     const key = `${req.userId}_${broker._id}`;
-    console.log(`Initializing MQTT handler for broker ${broker._id} for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Initializing MQTT handler for broker ${broker._id} (IP: ${broker.brokerIp})`);
     const mqttHandler = new MqttHandler(null, req.userId, broker);
     req.mqttHandlers.set(key, mqttHandler);
     mqttHandler.connect();
@@ -110,10 +113,10 @@ router.post("/brokers", auth, async (req, res) => {
           { _id: broker._id, userId: req.userId },
           { connectionStatus: "connected" }
         );
-        console.log(`Broker ${broker._id} status updated to connected for user ${req.userId}`);
+        console.log(`[User: ${req.userId}] Broker ${broker._id} status updated to connected (IP: ${broker.brokerIp})`);
         req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "connected" });
       } catch (error) {
-        console.error(`Error updating broker ${broker._id} status for user ${req.userId}: ${error.message}`);
+        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
       }
     });
 
@@ -123,10 +126,10 @@ router.post("/brokers", auth, async (req, res) => {
           { _id: broker._id, userId: req.userId },
           { connectionStatus: "error" }
         );
-        console.error(`Broker ${broker._id} error for user ${req.userId}: ${err.message}`);
+        console.error(`[User: ${req.userId}] Broker ${broker._id} error (IP: ${broker.brokerIp}): ${err.message}`);
         req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "error" });
       } catch (error) {
-        console.error(`Error updating broker ${broker._id} status for user ${req.userId}: ${error.message}`);
+        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
       }
     });
 
@@ -136,19 +139,19 @@ router.post("/brokers", auth, async (req, res) => {
           { _id: broker._id, userId: req.userId },
           { connectionStatus: "disconnected" }
         );
-        console.log(`Broker ${broker._id} disconnected for user ${req.userId}`);
+        console.log(`[User: ${req.userId}] Broker ${broker._id} disconnected (IP: ${broker.brokerIp})`);
         req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "disconnected" });
       } catch (error) {
-        console.error(`Error updating broker ${broker._id} status for user ${req.userId}: ${error.message}`);
+        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
       }
     });
 
-    console.log(`Emitting connect_broker event for broker ${broker._id} to user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Emitting connect_broker event for broker ${broker._id} (IP: ${broker.brokerIp})`);
     req.io.to(req.userId).emit("connect_broker", { brokerId: broker._id });
 
     res.status(201).json(broker);
   } catch (error) {
-    console.error(`Error creating broker for user ${req.userId}: ${error.message}`);
+    console.error(`[User: ${req.userId}] Error creating broker: ${error.message}`);
     res.status(400).json({
       message: "Failed to create broker",
       error: error.message,
@@ -158,12 +161,12 @@ router.post("/brokers", auth, async (req, res) => {
 
 router.get("/brokers", auth, async (req, res) => {
   try {
-    console.log(`Fetching brokers for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Fetching brokers`);
     const brokers = await Broker.find({ userId: req.userId });
-    console.log(`Found ${brokers.length} brokers for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Found ${brokers.length} brokers`);
     res.status(200).json(brokers);
   } catch (error) {
-    console.error(`Error fetching brokers for user ${req.userId}: ${error.message}`);
+    console.error(`[User: ${req.userId}] Error fetching brokers: ${error.message}`);
     res.status(500).json({
       message: "Failed to fetch brokers",
       error: error.message,
@@ -175,23 +178,23 @@ router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
   try {
     const { brokerId } = req.params;
     const { topic } = req.body;
-    console.log(`Processing subscription for topic ${topic} on broker ${brokerId} for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Processing subscription for topic ${topic} on broker ${brokerId}`);
     if (!topic) {
-      console.error(`Topic missing for subscription on broker ${brokerId} for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Topic missing for subscription on broker ${brokerId}`);
       return res.status(400).json({ message: "Topic is required" });
     }
     const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
     if (!broker) {
-      console.error(`Broker ${brokerId} not found for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    console.log(`Emitting subscribe event for topic ${topic} on broker ${brokerId} to user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Emitting subscribe event for topic ${topic} on broker ${brokerId} (IP: ${broker.brokerIp})`);
     req.io.to(req.userId).emit("subscribe", { brokerId, topic });
 
     res.status(200).json({ message: `Subscription request for topic ${topic} received`, brokerId });
   } catch (error) {
-    console.error(`Error processing subscription for user ${req.userId}: ${error.message}`);
+    console.error(`[User: ${req.userId}] Error processing subscription: ${error.message}`);
     res.status(400).json({
       message: "Failed to process subscription",
       error: error.message,
@@ -202,19 +205,19 @@ router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
 router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
   try {
     const { brokerId } = req.params;
-    console.log(`Processing connection request for broker ${brokerId} for user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Processing connection request for broker ${brokerId}`);
     const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
     if (!broker) {
-      console.error(`Broker ${brokerId} not found for user ${req.userId}`);
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    console.log(`Emitting connect_broker event for broker ${brokerId} to user ${req.userId}`);
+    console.log(`[User: ${req.userId}] Emitting connect_broker event for broker ${brokerId} (IP: ${broker.brokerIp})`);
     req.io.to(req.userId).emit("connect_broker", { brokerId });
 
     res.status(200).json({ message: `Connection request for broker ${brokerId} received` });
   } catch (error) {
-    console.error(`Error processing connection request for user ${req.userId}: ${error.message}`);
+    console.error(`[User: ${req.userId}] Error processing connection request: ${error.message}`);
     res.status(400).json({
       message: "Failed to process connection request",
       error: error.message,
