@@ -10,8 +10,8 @@ class MqttHandler {
     this.brokerUrl = `mqtt://${broker.brokerIp}:${broker.portNumber || 1883}`;
     this.connectionStatus = "disconnected";
     this.retryAttempts = 0;
-    this.maxRetries = 10; // Increased for better resilience
-    this.retryDelay = 10000; // Increased to 10 seconds
+    this.maxRetries = 5;
+    this.retryDelay = 5000;
     console.log(`[User: ${this.userId}] MQTT handler initialized for ${this.clientId} (Broker ID: ${broker._id}, IP: ${broker.brokerIp}, Port: ${broker.portNumber || 1883})`);
   }
 
@@ -35,7 +35,6 @@ class MqttHandler {
         username: this.broker.username || "",
         password: this.broker.password || "",
         connectTimeout: 5 * 1000,
-        keepalive: 60,
       };
 
       console.log(`[User: ${this.userId}] Testing connection to ${brokerUrl} for client ${clientId}`);
@@ -91,7 +90,7 @@ class MqttHandler {
       console.error(`[User: ${this.userId}] MQTT client ${this.clientId} reached max retry attempts (${this.maxRetries}) for ${this.brokerUrl} (Broker ID: ${this.broker._id})`);
       if (this.socket) {
         this.socket.emit("error", {
-          message: `Failed to connect to broker at ${this.broker.brokerIp}:${this.broker.portNumber || 1883} after ${this.maxRetries} attempts`,
+          message: `Failed to connect to broker after ${this.maxRetries} attempts`,
           brokerId: this.broker._id,
         });
       }
@@ -149,15 +148,9 @@ class MqttHandler {
 
     this.client.on("error", (err) => {
       console.error(`[User: ${this.userId}] MQTT client ${this.clientId} error (status: ${this.connectionStatus}) for ${this.brokerUrl} (Broker ID: ${this.broker._id}): ${err.message}`);
-      let errorMessage = `MQTT error: ${err.message}`;
-      if (err.message.includes("ECONNRESET")) {
-        errorMessage = `Connection reset by broker at ${this.broker.brokerIp}:${this.broker.portNumber || 1883}. Retrying...`;
-      } else if (err.message.includes("EHOSTUNREACH")) {
-        errorMessage = `Broker at ${this.broker.brokerIp}:${this.broker.portNumber || 1883} is unreachable. Please check the broker's status.`;
-      }
       if (this.socket) {
         this.socket.emit("error", {
-          message: errorMessage,
+          message: `MQTT error: ${err.message}`,
           brokerId: this.broker._id,
         });
       }
@@ -192,7 +185,7 @@ class MqttHandler {
       this.disconnect();
       if (this.socket) {
         this.socket.emit("error", {
-          message: `Failed to reconnect to broker at ${this.broker.brokerIp}:${this.broker.portNumber || 1883} after ${this.maxRetries} attempts`,
+          message: `Failed to reconnect to broker after ${this.maxRetries} attempts`,
           brokerId: this.broker._id,
         });
       }
@@ -287,8 +280,6 @@ class MqttHandler {
   updateSocket(newSocket) {
     console.log(`[User: ${this.userId}] Updating socket for MQTT client ${this.clientId} (Broker ID: ${this.broker._id}) from ${this.socket?.id || "none"} to ${newSocket.id}`);
     this.socket = newSocket;
-    // Emit current status to ensure new socket is updated
-    this.socket.emit("mqtt_status", { brokerId: this.broker._id, status: this.connectionStatus });
   }
 
   isConnected() {

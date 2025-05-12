@@ -225,4 +225,44 @@ router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
   }
 });
 
+router.delete("/brokers/:brokerId", auth, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    console.log(`[User: ${req.userId}] Processing delete request for broker ${brokerId}`);
+
+    // Verify broker exists and belongs to the user
+    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    if (!broker) {
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: "Broker not found" });
+    }
+
+    // Delete the broker from the database
+    await Broker.deleteOne({ _id: brokerId, userId: req.userId });
+    console.log(`[User: ${req.userId}] Broker ${brokerId} deleted from database`);
+
+    // Clean up MQTT handler
+    const key = `${req.userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    if (mqttHandler) {
+      console.log(`[User: ${req.userId}] Disconnecting MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
+      mqttHandler.disconnect();
+      req.mqttHandlers.delete(key);
+      console.log(`[User: ${req.userId}] MQTT handler for broker ${brokerId} removed`);
+    }
+
+    // Notify connected clients
+    console.log(`[User: ${req.userId}] Emitting broker_deleted event for broker ${brokerId}`);
+    req.io.to(req.userId).emit("broker_deleted", { brokerId });
+
+    res.status(200).json({ message: "Broker deleted successfully" });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error deleting broker ${req.params.brokerId}: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to delete broker",
+      error: error.message,
+    });
+  }
+});
+
 module.exports = router;
