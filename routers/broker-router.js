@@ -174,6 +174,77 @@ router.get("/brokers", auth, async (req, res) => {
   }
 });
 
+router.put("/brokers/:brokerId", auth, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    const { brokerIp, portNumber = 1883, username, password, label } = req.body;
+    console.log(`[User: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
+
+    if (!brokerIp) {
+      console.error(`[User: ${req.userId}] Broker IP missing`);
+      return res.status(400).json({ message: "Broker IP is required" });
+    }
+    if (!isValidIPv4(brokerIp)) {
+      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
+      return res.status(400).json({ message: "Invalid IP address format" });
+    }
+    if (!label) {
+      console.error(`[User: ${req.userId}] Label missing`);
+      return res.status(400).json({ message: "Label is required" });
+    }
+
+    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    if (!broker) {
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: "Broker not found" });
+    }
+
+    // Check if another broker with the same IP exists
+    const existingBroker = await Broker.findOne({
+      brokerIp,
+      userId: req.userId,
+      _id: { $ne: brokerId },
+    });
+    if (existingBroker) {
+      console.error(`[User: ${req.userId}] Broker with IP ${brokerIp} already exists`);
+      return res.status(400).json({ message: "Broker with this IP already exists" });
+    }
+
+    // Update broker details
+    broker.brokerIp = brokerIp;
+    broker.portNumber = portNumber;
+    broker.username = username || "";
+    broker.password = password || "";
+    broker.label = label;
+    await broker.save();
+    console.log(`[User: ${req.userId}] Broker ${brokerId} updated successfully`);
+
+    // Update MQTT handler
+    const key = `${req.userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    if (mqttHandler) {
+      console.log(`[User: ${req.userId}] Updating MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
+      mqttHandler.disconnect();
+      req.mqttHandlers.delete(key);
+      const newMqttHandler = new MqttHandler(null, req.userId, broker);
+      req.mqttHandlers.set(key, newMqttHandler);
+      newMqttHandler.connect();
+    }
+
+    // Notify connected clients
+    console.log(`[User: ${req.userId}] Emitting broker_updated event for broker ${brokerId}`);
+    req.io.to(req.userId).emit("broker_updated", { broker });
+
+    res.status(200).json(broker);
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error updating broker ${req.params.brokerId}: ${error.message}`);
+    res.status(400).json({
+      message: "Failed to update broker",
+      error: error.message,
+    });
+  }
+});
+
 router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
   try {
     const { brokerId } = req.params;

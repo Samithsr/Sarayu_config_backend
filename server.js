@@ -169,6 +169,11 @@ io.on("connection", async (socket) => {
     }
   });
 
+  socket.on("broker_updated", async ({ broker }) => {
+    console.log(`[User: ${socket.userId}] Broadcasting broker_updated event for broker ${broker._id}`);
+    io.to(socket.userId).emit("broker_updated", { broker });
+  });
+
   socket.on("disconnect", () => {
     console.log(`[User: ${socket.userId}] Socket disconnected: ${socket.id}`);
     if (userSockets.has(socket.userId)) {

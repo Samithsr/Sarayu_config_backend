@@ -1,3 +1,4 @@
+// MqttHandler.js
 const mqtt = require("mqtt");
 
 class MqttHandler {
@@ -12,7 +13,7 @@ class MqttHandler {
     this.retryAttempts = 0;
     this.maxRetries = 5;
     this.retryDelay = 5000;
-    console.log(`[User: ${this.userId}] MQTT handler initialized for ${this.clientId} (Broker ID: ${broker._id}, IP: ${broker.brokerIp}, Port: ${broker.portNumber || 1883})`);
+    console.log(`[User: ${this.userId}] MQTT handler initialized for ${this.clientId} (Broker ID: ${broker._id}, IP: ${broker.brokerIp})`);
   }
 
   isValidIPv4(ip) {
@@ -170,7 +171,7 @@ class MqttHandler {
     });
 
     this.client.on("offline", () => {
-      console.log(`[User: ${this.userId}] MQTT client ${this.clientId} is offline for ${this.brokerUrl} (Broker ID: ${this.broker._id})`);
+      console.log(`[User:media ${this.userId}] MQTT client ${this.clientId} is offline for ${this.brokerUrl} (Broker ID: ${this.broker._id})`);
     });
   }
 
@@ -183,12 +184,6 @@ class MqttHandler {
     } else if (this.retryAttempts >= this.maxRetries) {
       console.error(`[User: ${this.userId}] MQTT client ${this.clientId} reached max retry attempts (${this.maxRetries}) for ${this.brokerUrl} (Broker ID: ${this.broker._id})`);
       this.disconnect();
-      if (this.socket) {
-        this.socket.emit("error", {
-          message: `Failed to reconnect to broker after ${this.maxRetries} attempts`,
-          brokerId: this.broker._id,
-        });
-      }
     }
   }
 
