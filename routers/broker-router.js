@@ -27,6 +27,7 @@ const isValidIPv4 = (ip) => {
   return ipv4Regex.test(ip);
 };
 
+// Existing endpoints (unchanged)
 router.post("/test-broker", auth, async (req, res) => {
   try {
     const { brokerIp, portNumber = 1883, username, password } = req.body;
@@ -106,49 +107,6 @@ router.post("/brokers", auth, async (req, res) => {
     req.mqttHandlers.set(key, mqttHandler);
     mqttHandler.connect();
 
-    // Listen for MQTT connection status to update broker in DB
-    mqttHandler.client?.on("connect", async () => {
-      try {
-        await Broker.updateOne(
-          { _id: broker._id, userId: req.userId },
-          { connectionStatus: "connected" }
-        );
-        console.log(`[User: ${req.userId}] Broker ${broker._id} status updated to connected (IP: ${broker.brokerIp})`);
-        req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "connected" });
-      } catch (error) {
-        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
-      }
-    });
-
-    mqttHandler.client?.on("error", async (err) => {
-      try {
-        await Broker.updateOne(
-          { _id: broker._id, userId: req.userId },
-          { connectionStatus: "error" }
-        );
-        console.error(`[User: ${req.userId}] Broker ${broker._id} error (IP: ${broker.brokerIp}): ${err.message}`);
-        req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "error" });
-      } catch (error) {
-        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
-      }
-    });
-
-    mqttHandler.client?.on("close", async () => {
-      try {
-        await Broker.updateOne(
-          { _id: broker._id, userId: req.userId },
-          { connectionStatus: "disconnected" }
-        );
-        console.log(`[User: ${req.userId}] Broker ${broker._id} disconnected (IP: ${broker.brokerIp})`);
-        req.io.to(req.userId).emit("mqtt_status", { brokerId: broker._id, status: "disconnected" });
-      } catch (error) {
-        console.error(`[User: ${req.userId}] Error updating broker ${broker._id} status: ${error.message}`);
-      }
-    });
-
-    console.log(`[User: ${req.userId}] Emitting connect_broker event for broker ${broker._id} (IP: ${broker.brokerIp})`);
-    req.io.to(req.userId).emit("connect_broker", { brokerId: broker._id });
-
     res.status(201).json(broker);
   } catch (error) {
     console.error(`[User: ${req.userId}] Error creating broker: ${error.message}`);
@@ -199,7 +157,6 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    // Check if another broker with the same IP exists
     const existingBroker = await Broker.findOne({
       brokerIp,
       userId: req.userId,
@@ -210,7 +167,6 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
       return res.status(400).json({ message: "Broker with this IP already exists" });
     }
 
-    // Update broker details
     broker.brokerIp = brokerIp;
     broker.portNumber = portNumber;
     broker.username = username || "";
@@ -219,7 +175,6 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
     await broker.save();
     console.log(`[User: ${req.userId}] Broker ${brokerId} updated successfully`);
 
-    // Update MQTT handler
     const key = `${req.userId}_${brokerId}`;
     const mqttHandler = req.mqttHandlers.get(key);
     if (mqttHandler) {
@@ -230,10 +185,6 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
       req.mqttHandlers.set(key, newMqttHandler);
       newMqttHandler.connect();
     }
-
-    // Notify connected clients
-    console.log(`[User: ${req.userId}] Emitting broker_updated event for broker ${brokerId}`);
-    req.io.to(req.userId).emit("broker_updated", { broker });
 
     res.status(200).json(broker);
   } catch (error) {
@@ -260,10 +211,15 @@ router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    console.log(`[User: ${req.userId}] Emitting subscribe event for topic ${topic} on broker ${brokerId} (IP: ${broker.brokerIp})`);
-    req.io.to(req.userId).emit("subscribe", { brokerId, topic });
+    const key = `${req.userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    if (!mqttHandler || !mqttHandler.isConnected()) {
+      console.error(`[User: ${req.userId}] MQTT handler not found or not connected for broker ${brokerId}`);
+      return res.status(400).json({ message: "MQTT client not connected" });
+    }
 
-    res.status(200).json({ message: `Subscription request for topic ${topic} received`, brokerId });
+    mqttHandler.subscribe(topic);
+    res.status(200).json({ message: `Subscribed to topic ${topic}`, brokerId });
   } catch (error) {
     console.error(`[User: ${req.userId}] Error processing subscription: ${error.message}`);
     res.status(400).json({
@@ -283,10 +239,50 @@ router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    console.log(`[User: ${req.userId}] Emitting connect_broker event for broker ${brokerId} (IP: ${broker.brokerIp})`);
-    req.io.to(req.userId).emit("connect_broker", { brokerId });
+    const key = `${req.userId}_${brokerId}`;
+    let mqttHandler = req.mqttHandlers.get(key);
+    if (!mqttHandler) {
+      console.log(`[User: ${req.userId}] Creating new MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
+      mqttHandler = new MqttHandler(null, req.userId, broker);
+      req.mqttHandlers.set(key, mqttHandler);
+    }
 
-    res.status(200).json({ message: `Connection request for broker ${brokerId} received` });
+    mqttHandler.connect();
+
+    // Wait for connection status (up to 5 seconds)
+    let attempts = 0;
+    const maxAttempts = 10; // 5 seconds / 500ms = 10 attempts
+    const checkConnection = async () => {
+      if (mqttHandler.isConnected()) {
+        await Broker.updateOne(
+          { _id: brokerId, userId: req.userId },
+          { connectionStatus: "connected" }
+        );
+        console.log(`[User: ${req.userId}] Broker ${brokerId} connected successfully`);
+        return { status: "connected" };
+      }
+      if (attempts >= maxAttempts) {
+        await Broker.updateOne(
+          { _id: brokerId, userId: req.userId },
+          { connectionStatus: "disconnected" }
+        );
+        console.error(`[User: ${req.userId}] Broker ${brokerId} failed to connect after 5 seconds`);
+        return { status: "disconnected", error: "Connection timed out after 5 seconds" };
+      }
+      attempts++;
+      return new Promise((resolve) => {
+        setTimeout(async () => {
+          resolve(await checkConnection());
+        }, 500);
+      });
+    };
+
+    const result = await checkConnection();
+    if (result.status === "connected") {
+      res.status(200).json({ message: "Broker connected successfully", brokerId });
+    } else {
+      res.status(400).json({ message: result.error || "Failed to connect to broker", brokerId });
+    }
   } catch (error) {
     console.error(`[User: ${req.userId}] Error processing connection request: ${error.message}`);
     res.status(400).json({
@@ -301,18 +297,15 @@ router.delete("/brokers/:brokerId", auth, async (req, res) => {
     const { brokerId } = req.params;
     console.log(`[User: ${req.userId}] Processing delete request for broker ${brokerId}`);
 
-    // Verify broker exists and belongs to the user
     const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
     if (!broker) {
       console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
       return res.status(404).json({ message: "Broker not found" });
     }
 
-    // Delete the broker from the database
     await Broker.deleteOne({ _id: brokerId, userId: req.userId });
     console.log(`[User: ${req.userId}] Broker ${brokerId} deleted from database`);
 
-    // Clean up MQTT handler
     const key = `${req.userId}_${brokerId}`;
     const mqttHandler = req.mqttHandlers.get(key);
     if (mqttHandler) {
@@ -322,15 +315,46 @@ router.delete("/brokers/:brokerId", auth, async (req, res) => {
       console.log(`[User: ${req.userId}] MQTT handler for broker ${brokerId} removed`);
     }
 
-    // Notify connected clients
-    console.log(`[User: ${req.userId}] Emitting broker_deleted event for broker ${brokerId}`);
-    req.io.to(req.userId).emit("broker_deleted", { brokerId });
-
     res.status(200).json({ message: "Broker deleted successfully" });
   } catch (error) {
     console.error(`[User: ${req.userId}] Error deleting broker ${req.params.brokerId}: ${error.message}`);
     res.status(500).json({
       message: "Failed to delete broker",
+      error: error.message,
+    });
+  }
+});
+
+// New endpoint for publishing
+router.post("/brokers/:brokerId/publish", auth, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    const { topic, message } = req.body;
+    console.log(`[User: ${req.userId}] Processing publish request for topic ${topic} on broker ${brokerId}`);
+    if (!topic || !message) {
+      console.error(`[User: ${req.userId}] Topic or message missing for publish on broker ${brokerId}`);
+      return res.status(400).json({ message: "Topic and message are required" });
+    }
+
+    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    if (!broker) {
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: "Broker not found" });
+    }
+
+    const key = `${req.userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    if (!mqttHandler || !mqttHandler.isConnected()) {
+      console.error(`[User: ${req.userId}] MQTT handler not found or not connected for broker ${brokerId}`);
+      return res.status(400).json({ message: "MQTT client not connected" });
+    }
+
+    mqttHandler.publish(topic, message);
+    res.status(200).json({ message: `Published to topic ${topic}`, brokerId });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error processing publish: ${error.message}`);
+    res.status(400).json({
+      message: "Failed to publish message",
       error: error.message,
     });
   }
