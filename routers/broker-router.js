@@ -21,13 +21,11 @@ const auth = (req, res, next) => {
   }
 };
 
-// Validate IPv4 address
 const isValidIPv4 = (ip) => {
   const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   return ipv4Regex.test(ip);
 };
 
-// Existing endpoints (unchanged)
 router.post("/test-broker", auth, async (req, res) => {
   try {
     const { brokerIp, portNumber = 1883, username, password } = req.body;
@@ -100,7 +98,6 @@ router.post("/brokers", auth, async (req, res) => {
     await broker.save();
     console.log(`[User: ${req.userId}] Broker ${broker._id} created with IP ${brokerIp}:${portNumber}`);
 
-    // Initialize MQTT connection
     const key = `${req.userId}_${broker._id}`;
     console.log(`[User: ${req.userId}] Initializing MQTT handler for broker ${broker._id} (IP: ${broker.brokerIp})`);
     const mqttHandler = new MqttHandler(null, req.userId, broker);
@@ -136,7 +133,7 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
   try {
     const { brokerId } = req.params;
     const { brokerIp, portNumber = 1883, username, password, label } = req.body;
-    console.log(`[User: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
+    console.log(`[ unsalted: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
 
     if (!brokerIp) {
       console.error(`[User: ${req.userId}] Broker IP missing`);
@@ -249,9 +246,8 @@ router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
 
     mqttHandler.connect();
 
-    // Wait for connection status (up to 5 seconds)
     let attempts = 0;
-    const maxAttempts = 10; // 5 seconds / 500ms = 10 attempts
+    const maxAttempts = 10;
     const checkConnection = async () => {
       if (mqttHandler.isConnected()) {
         await Broker.updateOne(
@@ -325,7 +321,6 @@ router.delete("/brokers/:brokerId", auth, async (req, res) => {
   }
 });
 
-// New endpoint for publishing
 router.post("/brokers/:brokerId/publish", auth, async (req, res) => {
   try {
     const { brokerId } = req.params;
@@ -355,6 +350,41 @@ router.post("/brokers/:brokerId/publish", auth, async (req, res) => {
     console.error(`[User: ${req.userId}] Error processing publish: ${error.message}`);
     res.status(400).json({
       message: "Failed to publish message",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/brokers/:brokerId/disconnect", auth, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    console.log(`[User: ${req.userId}] Processing disconnect request for broker ${brokerId}`);
+
+    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    if (!broker) {
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: "Broker not found" });
+    }
+
+    const key = `${req.userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    if (mqttHandler) {
+      console.log(`[User: ${req.userId}] Disconnecting MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
+      mqttHandler.disconnect();
+      req.mqttHandlers.delete(key);
+      console.log(`[User: ${req.userId}] MQTT handler for broker ${brokerId} removed`);
+    }
+
+    await Broker.updateOne(
+      { _id: brokerId, userId: req.userId },
+      { connectionStatus: "disconnected" }
+    );
+
+    res.status(200).json({ message: "Broker disconnected successfully", brokerId });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error disconnecting broker ${brokerId}: ${error.message}`);
+    res.status(400).json({
+      message: "Failed to disconnect broker",
       error: error.message,
     });
   }
