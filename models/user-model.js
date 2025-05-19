@@ -14,6 +14,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, "Password is required"],
     },
+    roles: {
+      type: String,
+      enum: ["admin", "user"],
+      default: "user"
+    }
   },
   {
     timestamps: true,
@@ -31,9 +36,11 @@ userSchema.pre("save", async function (next) {
 });
 
 userSchema.methods.generateToken = function () {
-  return jwt.sign({ _id: this._id, email: this.email }, "x-auth-token", {
-    expiresIn: "3d",
-  });
+  return jwt.sign(
+    { _id: this._id, email: this.email, role: this.roles },
+    "x-auth-token",
+    { expiresIn: "3d" }
+  );
 };
 
 userSchema.methods.verifypass = async function (userEnteredPass) {

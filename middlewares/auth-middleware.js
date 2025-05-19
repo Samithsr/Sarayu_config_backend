@@ -11,7 +11,8 @@ const authMiddleware = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, "x-auth-token");
     req.userId = decoded._id;
-    console.log(`[Auth] Token verified for user: ${req.userId}`);
+    req.userRole = decoded.role; // Attach role to req
+    console.log(`[Auth] Token verified for user: ${req.userId}, role: ${req.userRole}`);
     next();
   } catch (error) {
     console.error(`[Auth] Invalid token: ${error.message}`);

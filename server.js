@@ -9,6 +9,7 @@ const { Server } = require("socket.io");
 const Broker = require("./models/broker-model");
 const jwt = require("jsonwebtoken");
 const MqttHandler = require("./middlewares/mqtt-handler");
+const restrictToadmin = require("./middlewares/restrictToadmin");
 
 const app = express();
 const server = http.createServer(app);

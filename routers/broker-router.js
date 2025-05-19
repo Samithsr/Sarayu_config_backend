@@ -3,30 +3,15 @@ const router = express.Router();
 const jwt = require("jsonwebtoken");
 const Broker = require("../models/broker-model");
 const MqttHandler = require("../middlewares/mqtt-handler");
-
-const auth = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    console.error(`[User: Unknown] Unauthorized: No token provided`);
-    return res.status(401).json({ message: "Unauthorized: No token provided" });
-  }
-  try {
-    const decoded = jwt.verify(token, "x-auth-token");
-    req.userId = decoded._id;
-    console.log(`[User: ${req.userId}] Authentication successful`);
-    next();
-  } catch (error) {
-    console.error(`[User: Unknown] Unauthorized: Invalid token`);
-    return res.status(401).json({ message: "Unauthorized: Invalid token" });
-  }
-};
+const authMiddleware = require("../middlewares/auth-middleware");
+const restrictToadmin = require("../middlewares/restrictToadmin");
 
 const isValidIPv4 = (ip) => {
   const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   return ipv4Regex.test(ip);
 };
 
-router.post("/test-broker", auth, async (req, res) => {
+router.post("/test-broker", authMiddleware, async (req, res) => {
   try {
     const { brokerIp, portNumber = 1883, username, password } = req.body;
     console.log(`[User: ${req.userId}] Testing broker availability for IP ${brokerIp}:${portNumber}`);
@@ -62,7 +47,7 @@ router.post("/test-broker", auth, async (req, res) => {
   }
 });
 
-router.post("/brokers", auth, async (req, res) => {
+router.post("/brokers", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
     const { brokerIp, username, password, label, portNumber = 1883 } = req.body;
     console.log(`[User: ${req.userId}] Creating broker with IP ${brokerIp}:${portNumber}, label: ${label}`);
@@ -114,7 +99,7 @@ router.post("/brokers", auth, async (req, res) => {
   }
 });
 
-router.get("/brokers", auth, async (req, res) => {
+router.get("/brokers", authMiddleware, async (req, res) => {
   try {
     console.log(`[User: ${req.userId}] Fetching brokers`);
     const brokers = await Broker.find({ userId: req.userId });
@@ -129,11 +114,11 @@ router.get("/brokers", auth, async (req, res) => {
   }
 });
 
-router.put("/brokers/:brokerId", auth, async (req, res) => {
+router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
     const { brokerId } = req.params;
     const { brokerIp, portNumber = 1883, username, password, label } = req.body;
-    console.log(`[ unsalted: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
+    console.log(`[User: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
 
     if (!brokerIp) {
       console.error(`[User: ${req.userId}] Broker IP missing`);
@@ -193,7 +178,7 @@ router.put("/brokers/:brokerId", auth, async (req, res) => {
   }
 });
 
-router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
+router.post("/brokers/:brokerId/subscribe", authMiddleware, async (req, res) => {
   try {
     const { brokerId } = req.params;
     const { topic } = req.body;
@@ -226,7 +211,7 @@ router.post("/brokers/:brokerId/subscribe", auth, async (req, res) => {
   }
 });
 
-router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
+router.post("/brokers/:brokerId/connect", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
     const { brokerId } = req.params;
     console.log(`[User: ${req.userId}] Processing connection request for broker ${brokerId}`);
@@ -288,7 +273,7 @@ router.post("/brokers/:brokerId/connect", auth, async (req, res) => {
   }
 });
 
-router.delete("/brokers/:brokerId", auth, async (req, res) => {
+router.delete("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
     const { brokerId } = req.params;
     console.log(`[User: ${req.userId}] Processing delete request for broker ${brokerId}`);
@@ -320,8 +305,7 @@ router.delete("/brokers/:brokerId", auth, async (req, res) => {
     });
   }
 });
-
-router.post("/brokers/:brokerId/publish", auth, async (req, res) => {
+router.post("/brokers/:brokerId/publish", authMiddleware, async (req, res) => {
   try {
     const { brokerId } = req.params;
     const { topic, message } = req.body;
@@ -355,7 +339,7 @@ router.post("/brokers/:brokerId/publish", auth, async (req, res) => {
   }
 });
 
-router.post("/brokers/:brokerId/disconnect", auth, async (req, res) => {
+router.post("/brokers/:brokerId/disconnect", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
     const { brokerId } = req.params;
     console.log(`[User: ${req.userId}] Processing disconnect request for broker ${brokerId}`);

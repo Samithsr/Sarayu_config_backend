@@ -1,34 +1,30 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
-const BrokerSchema = new mongoose.Schema({
+const brokerSchema = new mongoose.Schema({
   brokerIp: {
     type: String,
-    required: [true, "Broker IP is required"],
+    required: true,
   },
   portNumber: {
     type: Number,
-    default: 1883,
-  },
-  username: {
-    type: String,
-  },
-  password: {
-    type: String,
+    required: true,
   },
   label: {
     type: String,
-    required: [true, "Label is required"],
-  },
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: [true, "User ID is required"],
+    required: true,
   },
   connectionStatus: {
     type: String,
-    enum: ['connected', 'disconnected', 'connecting', 'error'],
     default: 'disconnected',
   },
-}, { timestamps: true });
+  userId: {
+    type: String, // The admin who created the broker
+    required: true,
+  },
+  assignedUserId: {
+    type: String, // The user assigned to this broker
+    default: null,
+  },
+});
 
-module.exports = mongoose.model("Broker", BrokerSchema);
+module.exports = mongoose.model('Broker', brokerSchema);

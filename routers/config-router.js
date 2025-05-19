@@ -1,24 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const jwt = require("jsonwebtoken");
 const Broker = require("../models/broker-model");
 const Configuration = require("../models/configuration-model");
+const authMiddleware = require("../middlewares/auth-middleware");
 
-const auth = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ message: "Unauthorized: No token provided" });
-  }
-  try {
-    const decoded = jwt.verify(token, "x-auth-token");
-    req.userId = decoded._id;
-    next();
-  } catch (error) {
-    res.status(401).json({ message: "Unauthorized: Invalid token" });
-  }
-};
-
-router.post("/configurations", auth, async (req, res) => {
+router.post("/configurations", authMiddleware, async (req, res) => {
   try {
     const { configurations, userId, brokerId, topicName } = req.body;
 
