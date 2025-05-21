@@ -50,7 +50,56 @@ router.post('/signin', async (req, res) => {
   }
 });
 
-// New route to fetch all users (admin only)
+// New signup route
+router.post('/signup', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate request body
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    // Check if email already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email already exists' });
+    }
+
+    // Create new user
+    const user = new User({
+      email,
+      password, // Will be hashed by the pre-save hook in user-model.js
+      roles: 'user', // Default role
+    });
+
+    await user.save();
+
+    // Generate JWT token
+    const token = user.generateToken();
+
+    // Log the signup event
+    console.log(`[Auth] User signed up: ${user._id}, email: ${email}, role: ${user.roles}`);
+
+    // Return token and user details
+    res.status(201).json({
+      token,
+      user: {
+        _id: user._id,
+        email: user.email,
+        roles: user.roles,
+      },
+    });
+  } catch (error) {
+    console.error(`[Auth] Signup error: ${error.message}`);
+    res.status(500).json({
+      message: 'Server error during signup',
+      error: error.message,
+    });
+  }
+});
+
+// Fetch all users (admin only)
 router.get('/users', authMiddleware, restrictToadmin('admin'), async (req, res) => {
   try {
     console.log(`[User: ${req.userId}] Fetching all users`);

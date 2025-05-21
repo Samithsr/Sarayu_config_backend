@@ -48,3 +48,4 @@ router.post("/configurations", authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+

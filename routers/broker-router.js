@@ -1,94 +1,364 @@
+// File: routers/broker-router.js
 const express = require("express");
 const router = express.Router();
-const jwt = require("jsonwebtoken");
 const Broker = require("../models/broker-model");
+const User = require("../models/user-model");
 const MqttHandler = require("../middlewares/mqtt-handler");
 const authMiddleware = require("../middlewares/auth-middleware");
 const restrictToadmin = require("../middlewares/restrictToadmin");
+const mongoose = require("mongoose");
 
 const isValidIPv4 = (ip) => {
   const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   return ipv4Regex.test(ip);
 };
 
-router.post("/test-broker", authMiddleware, async (req, res) => {
+// Reusable connect broker logic
+const connectBroker = async (broker, userId, mqttHandlers, connectedBrokers) => {
   try {
-    const { brokerIp, portNumber = 1883, username, password } = req.body;
-    console.log(`[User: ${req.userId}] Testing broker availability for IP ${brokerIp}:${portNumber}`);
-    if (!brokerIp) {
-      console.error(`[User: ${req.userId}] Broker IP missing`);
-      return res.status(400).json({ message: "Broker IP is required" });
+    if (!userId) {
+      throw new Error("User ID is missing");
     }
-    if (!isValidIPv4(brokerIp)) {
-      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
-      return res.status(400).json({ message: "Invalid IP address format" });
+    if (!broker || !broker._id || !broker.brokerIp || !broker.portNumber) {
+      console.error(`[User: ${userId}] Invalid broker data: ${JSON.stringify(broker)}`);
+      throw new Error("Invalid or missing broker data");
+    }
+    if (!isValidIPv4(broker.brokerIp)) {
+      throw new Error(`Invalid broker IP: ${broker.brokerIp}`);
     }
 
-    const mqttHandler = new MqttHandler(null, req.userId, {
+    const key = `${userId}_${broker._id}`;
+    const user = await User.findById(userId);
+    const userEmail = user ? user.email : "Unknown";
+
+    console.log(`[User: ${userId} (${userEmail})] Connecting broker ${broker._id} with IP ${broker.brokerIp}:${broker.portNumber}`);
+
+    if (mqttHandlers.has(key)) {
+      const existingHandler = mqttHandlers.get(key);
+      if (existingHandler.isConnected()) {
+        console.log(`[User: ${userId} (${userEmail})] MQTT handler already connected for ${key}`);
+        return true;
+      } else {
+        console.log(`[User: ${userId} (${userEmail})] Removing stale MQTT handler for ${key}`);
+        existingHandler.disconnect();
+        mqttHandlers.delete(key);
+        connectedBrokers.delete(key);
+      }
+    }
+
+    const mqttHandler = new MqttHandler(userId, broker);
+    const connected = await mqttHandler.connect();
+    if (!connected) {
+      throw new Error("Failed to establish MQTT connection");
+    }
+    mqttHandlers.set(key, mqttHandler);
+    broker.connectionStatus = "connected";
+    await broker.save();
+
+    connectedBrokers.set(key, true);
+    console.log(`[User: ${userId} (${userEmail})] MQTT client connected for broker ${broker._id}`);
+    return true;
+  } catch (error) {
+    console.error(`[User: ${userId}] Failed to connect broker ${broker?._id || 'unknown'}: ${error.message}`);
+    return false;
+  }
+};
+
+// Test broker availability
+router.post("/test-broker", authMiddleware, async (req, res) => {
+  try {
+    const { brokerIp, portNumber, username, password } = req.body;
+    const userId = req.userId;
+    const user = await User.findById(userId);
+    const userEmail = user ? user.email : "Unknown";
+
+    console.log(`[User: ${userId} (${userEmail})] Testing broker ${brokerIp}:${portNumber}`);
+
+    if (!brokerIp || !portNumber) {
+      console.error(`[User: ${userId} (${userEmail})] Missing broker IP or port`);
+      return res.status(400).json({ message: "Broker IP and port are required" });
+    }
+
+    if (!isValidIPv4(brokerIp)) {
+      console.error(`[User: ${userId} (${userEmail})] Invalid IP address: ${brokerIp}`);
+      return res.status(400).json({ message: "Invalid IP address" });
+    }
+
+    if (portNumber < 1 || portNumber > 65535) {
+      console.error(`[User: ${userId} (${userEmail})] Invalid port number: ${portNumber}`);
+      return res.status(400).json({ message: "Port must be between 1 and 65535" });
+    }
+
+    const testBroker = {
+      _id: `test_${userId}_${Date.now()}`,
       brokerIp,
-      username,
-      password,
-      _id: "test",
-    });
-    const isAvailable = await mqttHandler.testConnection(portNumber);
-    if (!isAvailable) {
-      console.error(`[User: ${req.userId}] Broker ${brokerIp}:${portNumber} is not available`);
+      portNumber,
+      username: username || "",
+      password: password || "",
+    };
+
+    const mqttHandler = new MqttHandler(userId, testBroker);
+    const connected = await mqttHandler.testConnection(portNumber);
+
+    if (!connected) {
+      console.error(`[User: ${userId} (${userEmail})] Failed to connect to test broker ${brokerIp}:${portNumber}`);
       return res.status(400).json({ message: "Broker is not available" });
     }
 
-    console.log(`[User: ${req.userId}] Broker ${brokerIp}:${portNumber} is available`);
+    console.log(`[User: ${userId} (${userEmail})] Test connection successful for ${brokerIp}:${portNumber}`);
     res.status(200).json({ message: "Broker is available" });
   } catch (error) {
-    console.error(`[User: ${req.userId}] Error testing broker: ${error.message}`);
-    res.status(400).json({
-      message: "Failed to test broker",
+    const user = await User.findById(req.userId);
+    const userEmail = user ? user.email : "Unknown";
+    console.error(`[User: ${req.userId} (${userEmail})] Error testing broker: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to test broker connection",
       error: error.message,
     });
   }
 });
 
-router.post("/brokers", authMiddleware, restrictToadmin("admin"), async (req, res) => {
+// Get broker status
+router.get("/brokers/:brokerId/status", authMiddleware, async (req, res) => {
   try {
-    const { brokerIp, username, password, label, portNumber = 1883 } = req.body;
-    console.log(`[User: ${req.userId}] Creating broker with IP ${brokerIp}:${portNumber}, label: ${label}`);
-    if (!brokerIp) {
-      console.error(`[User: ${req.userId}] Broker IP missing`);
-      return res.status(400).json({ message: "Broker IP is required" });
+    const { brokerId } = req.params;
+    const userId = req.userId;
+    console.log(`[User: ${userId}] Checking status for broker ${brokerId}`);
+
+    const broker = await Broker.findOne({ _id: brokerId, assignedUserId: userId });
+    if (!broker) {
+      console.error(`[User: ${userId}] Broker ${brokerId} not found or not assigned to user`);
+      return res.status(404).json({ message: "Broker not found or not assigned to you" });
     }
-    if (!isValidIPv4(brokerIp)) {
-      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
-      return res.status(400).json({ message: "Invalid IP address format" });
-    }
-    if (!label) {
-      console.error(`[User: ${req.userId}] Label missing`);
-      return res.status(400).json({ message: "Label is required" });
-    }
-    const existingBroker = await Broker.findOne({
-      brokerIp,
-      userId: req.userId,
+
+    const key = `${userId}_${brokerId}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    const status = mqttHandler && mqttHandler.isConnected() ? "connected" : broker.connectionStatus;
+
+    console.log(`[User: ${userId}] Broker ${brokerId} status: ${status}`);
+    res.status(200).json({ status });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error fetching broker status: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to fetch broker status",
+      error: error.message,
     });
-    if (existingBroker) {
-      console.error(`[User: ${req.userId}] Broker with IP ${brokerIp} already exists`);
-      return res.status(400).json({ message: "Broker with this IP already exists" });
+  }
+});
+
+// Check if user is assigned to any broker and auto-connect
+router.get("/brokers/assigned", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    console.log(`[User: ${userId}] Checking assigned brokers`);
+
+    const user = await User.findById(userId);
+    if (!user) {
+      console.error(`[User: ${userId}] User not found`);
+      return res.status(404).json({ message: "User not found" });
     }
+
+    if (user.roles === "admin") {
+      console.log(`[User: ${userId}] Admin cannot be assigned to brokers`);
+      return res.status(403).json({ message: "Admins cannot be assigned to brokers" });
+    }
+
+    const broker = await Broker.findOne({ assignedUserId: userId });
+    if (!broker) {
+      console.log(`[User: ${userId}] No brokers assigned`);
+      return res.status(403).json({ message: "No brokers assigned to this user" });
+    }
+
+    if (broker.connectionStatus !== "connected") {
+      console.log(`[User: ${userId}] Auto-connecting broker ${broker._id}`);
+      const connected = await connectBroker(broker, userId, req.mqttHandlers, req.connectedBrokers);
+      if (!connected) {
+        return res.status(500).json({ message: "Failed to auto-connect broker" });
+      }
+    }
+
+    console.log(`[User: ${userId}] Found assigned broker ${broker._id}, status: ${broker.connectionStatus}`);
+    res.status(200).json({ 
+      brokerId: broker._id,
+      connectionStatus: broker.connectionStatus,
+    });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error checking assigned brokers: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to check assigned brokers",
+      error: error.message,
+    });
+  }
+});
+
+// Assign user to broker
+router.post('/brokers/:brokerId/assign-user', authMiddleware, restrictToadmin('admin'), async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    const { userId } = req.body;
+    console.log(`[Admin: ${req.userId}] Assigning user ${userId} to broker ${brokerId}`);
+
+    if (!userId) {
+      console.error(`[Admin: ${req.userId}] User ID missing for broker ${brokerId}`);
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      console.error(`[Admin: ${req.userId}] Invalid user ID format: ${userId}`);
+      return res.status(400).json({ message: 'Invalid user ID format' });
+    }
+
+    const broker = await Broker.findById(brokerId);
+    if (!broker) {
+      console.error(`[Admin: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      console.error(`[Admin: ${req.userId}] User ${userId} not found in database`);
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.roles === 'admin') {
+      console.error(`[Admin: ${req.userId}] Cannot assign admin user ${userId} to broker`);
+      return res.status(403).json({ message: 'Cannot assign admin users to brokers' });
+    }
+
+    broker.assignedUserId = userId;
+    await broker.save();
+
+    console.log(`[Admin: ${req.userId}] User ${userId} (${user.email}) assigned to broker ${brokerId} successfully`);
+    res.status(200).json({ 
+      message: 'User assigned to broker successfully', 
+      broker: {
+        ...broker.toObject(),
+        assignedUserId: userId,
+        assignedUserEmail: user.email
+      }
+    });
+  } catch (error) {
+    console.error(`[Admin: ${req.userId}] Error assigning user to broker ${req.params.brokerId}: ${error.message}`);
+    res.status(500).json({
+      message: 'Failed to assign user to broker',
+      error: error.message,
+    });
+  }
+});
+
+// Publish message
+router.post("/brokers/:brokerId/publish", authMiddleware, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    const { topic, message } = req.body;
+    const userId = req.userId;
+    const user = await User.findById(userId);
+    const userEmail = user ? user.email : "Unknown";
+    console.log(`[User: ${userId} (${userEmail})] Processing publish request for topic ${topic} on broker ${brokerId}`);
+
+    if (!topic || !message) {
+      console.error(`[User: ${userId} (${userEmail})] Topic or message missing for publish on broker ${brokerId}`);
+      return res.status(400).json({ message: "Topic and message are required" });
+    }
+
+    const broker = await Broker.findOne({ _id: brokerId, assignedUserId: userId });
+    if (!broker) {
+      console.error(`[User: ${userId} (${userEmail})] Broker ${brokerId} not found or not assigned to user`);
+      return res.status(404).json({ message: "Broker not found or you are not assigned to this broker" });
+    }
+
+    console.log(`[User: ${userId} (${userEmail})] Broker details: ID=${broker._id}, IP=${broker.brokerIp}, Port=${broker.portNumber}`);
+
+    if (user.roles === 'admin') {
+      console.error(`[User: ${userId} (${userEmail})] Admins are not allowed to publish`);
+      return res.status(403).json({ message: "Admins are not allowed to publish" });
+    }
+
+    const key = `${userId}_${brokerId}`;
+    let mqttHandler = req.mqttHandlers.get(key);
+
+    if (!mqttHandler || !mqttHandler.isConnected()) {
+      console.log(`[User: ${userId} (${userEmail})] Initializing or reconnecting MQTT handler for ${key}`);
+      const connected = await connectBroker(broker, userId, req.mqttHandlers, req.connectedBrokers);
+      if (!connected) {
+        console.error(`[User: ${userId} (${userEmail})] Failed to initialize MQTT handler for ${key}`);
+        return res.status(500).json({ message: "Failed to initialize MQTT connection" });
+      }
+      mqttHandler = req.mqttHandlers.get(key);
+    }
+
+    if (!mqttHandler.isConnected()) {
+      console.error(`[User: ${userId} (${userEmail})] MQTT handler not connected for ${key}`);
+      return res.status(500).json({ message: "MQTT client is not connected" });
+    }
+
+    mqttHandler.publish(topic, message);
+    console.log(`[User: ${userId} (${userEmail})] Published to topic ${topic} on broker ${brokerId}`);
+    res.status(200).json({ message: `Published to topic ${topic}`, brokerId });
+  } catch (error) {
+    const user = await User.findById(req.userId);
+    const userEmail = user ? user.email : "Unknown";
+    console.error(`[User: ${req.userId} (${userEmail})] Error processing publish: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to publish message",
+      error: error.message,
+    });
+  }
+});
+
+// Connect broker (restricted to admins)
+router.post("/brokers/:brokerId/connect", authMiddleware, restrictToadmin('admin'), async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    console.log(`[User: ${req.userId}] Connecting to broker ${brokerId}`);
+
+    const broker = await Broker.findById(brokerId);
+    if (!broker) {
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      return res.status(404).json({ message: "Broker not found" });
+    }
+
+    const connected = await connectBroker(broker, req.userId, req.mqttHandlers, req.connectedBrokers);
+    if (!connected) {
+      return res.status(500).json({ message: "Failed to connect to broker" });
+    }
+
+    res.status(200).json({ message: "Broker connected successfully" });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error connecting to broker ${req.params.brokerId}: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to connect to broker",
+      error: error.message,
+    });
+  }
+});
+
+// Create broker
+router.post("/brokers", authMiddleware, restrictToadmin('admin'), async (req, res) => {
+  try {
+    const { brokerIp, portNumber, username, password, label } = req.body;
+    console.log(`[User: ${req.userId}] Creating broker ${brokerIp}:${portNumber}`);
+
+    if (!brokerIp || !portNumber || !label) {
+      console.error(`[User: ${req.userId}] Missing required fields`);
+      return res.status(400).json({ message: "Broker IP, port, and label are required" });
+    }
+
+    if (!isValidIPv4(brokerIp)) {
+      console.error(`[User: ${req.userId}] Invalid IP address: ${brokerIp}`);
+      return res.status(400).json({ message: "Invalid IP address" });
+    }
+
     const broker = new Broker({
       brokerIp,
       portNumber,
-      username,
-      password,
+      username: username || "",
+      password: password || "",
       label,
       userId: req.userId,
-      connectionStatus: "connecting",
     });
+
     await broker.save();
-    console.log(`[User: ${req.userId}] Broker ${broker._id} created with IP ${brokerIp}:${portNumber}`);
-
-    const key = `${req.userId}_${broker._id}`;
-    console.log(`[User: ${req.userId}] Initializing MQTT handler for broker ${broker._id} (IP: ${broker.brokerIp})`);
-    const mqttHandler = new MqttHandler(null, req.userId, broker);
-    req.mqttHandlers.set(key, mqttHandler);
-    mqttHandler.connect();
-
+    console.log(`[User: ${req.userId}] Broker ${broker._id} created successfully`);
     res.status(201).json(broker);
   } catch (error) {
     console.error(`[User: ${req.userId}] Error creating broker: ${error.message}`);
@@ -99,11 +369,11 @@ router.post("/brokers", authMiddleware, restrictToadmin("admin"), async (req, re
   }
 });
 
+// Get all brokers
 router.get("/brokers", authMiddleware, async (req, res) => {
   try {
     console.log(`[User: ${req.userId}] Fetching brokers`);
-    const brokers = await Broker.find({ userId: req.userId });
-    console.log(`[User: ${req.userId}] Found ${brokers.length} brokers`);
+    const brokers = await Broker.find({ userId: req.userId }).populate('assignedUserId', 'email');
     res.status(200).json(brokers);
   } catch (error) {
     console.error(`[User: ${req.userId}] Error fetching brokers: ${error.message}`);
@@ -114,39 +384,27 @@ router.get("/brokers", authMiddleware, async (req, res) => {
   }
 });
 
-router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async (req, res) => {
+// Update broker
+router.put("/brokers/:brokerId", authMiddleware, restrictToadmin('admin'), async (req, res) => {
   try {
     const { brokerId } = req.params;
-    const { brokerIp, portNumber = 1883, username, password, label } = req.body;
-    console.log(`[User: ${req.userId}] Updating broker ${brokerId} with IP ${brokerIp}:${portNumber}, label: ${label}`);
+    const { brokerIp, portNumber, username, password, label } = req.body;
+    console.log(`[User: ${req.userId}] Updating broker ${brokerId}`);
 
-    if (!brokerIp) {
-      console.error(`[User: ${req.userId}] Broker IP missing`);
-      return res.status(400).json({ message: "Broker IP is required" });
+    if (!brokerIp || !portNumber || !label) {
+      console.error(`[User: ${req.userId}] Missing required fields for broker ${brokerId}`);
+      return res.status(400).json({ message: "Broker IP, port, and label are required" });
     }
+
     if (!isValidIPv4(brokerIp)) {
-      console.error(`[User: ${req.userId}] Invalid IP address ${brokerIp}`);
-      return res.status(400).json({ message: "Invalid IP address format" });
-    }
-    if (!label) {
-      console.error(`[User: ${req.userId}] Label missing`);
-      return res.status(400).json({ message: "Label is required" });
+      console.error(`[User: ${req.userId}] Invalid IP address: ${brokerIp}`);
+      return res.status(400).json({ message: "Invalid IP address" });
     }
 
     const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
     if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
-      return res.status(404).json({ message: "Broker not found" });
-    }
-
-    const existingBroker = await Broker.findOne({
-      brokerIp,
-      userId: req.userId,
-      _id: { $ne: brokerId },
-    });
-    if (existingBroker) {
-      console.error(`[User: ${req.userId}] Broker with IP ${brokerIp} already exists`);
-      return res.status(400).json({ message: "Broker with this IP already exists" });
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found or not owned by user`);
+      return res.status(404).json({ message: "Broker not found or you lack permission" });
     }
 
     broker.brokerIp = brokerIp;
@@ -154,148 +412,41 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async
     broker.username = username || "";
     broker.password = password || "";
     broker.label = label;
+
     await broker.save();
     console.log(`[User: ${req.userId}] Broker ${brokerId} updated successfully`);
-
-    const key = `${req.userId}_${brokerId}`;
-    const mqttHandler = req.mqttHandlers.get(key);
-    if (mqttHandler) {
-      console.log(`[User: ${req.userId}] Updating MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
-      mqttHandler.disconnect();
-      req.mqttHandlers.delete(key);
-      const newMqttHandler = new MqttHandler(null, req.userId, broker);
-      req.mqttHandlers.set(key, newMqttHandler);
-      newMqttHandler.connect();
-    }
-
     res.status(200).json(broker);
   } catch (error) {
     console.error(`[User: ${req.userId}] Error updating broker ${req.params.brokerId}: ${error.message}`);
-    res.status(400).json({
+    res.status(500).json({
       message: "Failed to update broker",
       error: error.message,
     });
   }
 });
 
-router.post("/brokers/:brokerId/subscribe", authMiddleware, async (req, res) => {
+// Delete broker
+router.delete("/brokers/:brokerId", authMiddleware, restrictToadmin('admin'), async (req, res) => {
   try {
     const { brokerId } = req.params;
-    const { topic } = req.body;
-    console.log(`[User: ${req.userId}] Processing subscription for topic ${topic} on broker ${brokerId}`);
-    if (!topic) {
-      console.error(`[User: ${req.userId}] Topic missing for subscription on broker ${brokerId}`);
-      return res.status(400).json({ message: "Topic is required" });
-    }
-    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
-    if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
-      return res.status(404).json({ message: "Broker not found" });
-    }
-
-    const key = `${req.userId}_${brokerId}`;
-    const mqttHandler = req.mqttHandlers.get(key);
-    if (!mqttHandler || !mqttHandler.isConnected()) {
-      console.error(`[User: ${req.userId}] MQTT handler not found or not connected for broker ${brokerId}`);
-      return res.status(400).json({ message: "MQTT client not connected" });
-    }
-
-    mqttHandler.subscribe(topic);
-    res.status(200).json({ message: `Subscribed to topic ${topic}`, brokerId });
-  } catch (error) {
-    console.error(`[User: ${req.userId}] Error processing subscription: ${error.message}`);
-    res.status(400).json({
-      message: "Failed to process subscription",
-      error: error.message,
-    });
-  }
-});
-
-router.post("/brokers/:brokerId/connect", authMiddleware, restrictToadmin("admin"), async (req, res) => {
-  try {
-    const { brokerId } = req.params;
-    console.log(`[User: ${req.userId}] Processing connection request for broker ${brokerId}`);
-    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
-    if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
-      return res.status(404).json({ message: "Broker not found" });
-    }
-
-    const key = `${req.userId}_${brokerId}`;
-    let mqttHandler = req.mqttHandlers.get(key);
-    if (!mqttHandler) {
-      console.log(`[User: ${req.userId}] Creating new MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
-      mqttHandler = new MqttHandler(null, req.userId, broker);
-      req.mqttHandlers.set(key, mqttHandler);
-    }
-
-    mqttHandler.connect();
-
-    let attempts = 0;
-    const maxAttempts = 10;
-    const checkConnection = async () => {
-      if (mqttHandler.isConnected()) {
-        await Broker.updateOne(
-          { _id: brokerId, userId: req.userId },
-          { connectionStatus: "connected" }
-        );
-        console.log(`[User: ${req.userId}] Broker ${brokerId} connected successfully`);
-        return { status: "connected" };
-      }
-      if (attempts >= maxAttempts) {
-        await Broker.updateOne(
-          { _id: brokerId, userId: req.userId },
-          { connectionStatus: "disconnected" }
-        );
-        console.error(`[User: ${req.userId}] Broker ${brokerId} failed to connect after 5 seconds`);
-        return { status: "disconnected", error: "Connection timed out after 5 seconds" };
-      }
-      attempts++;
-      return new Promise((resolve) => {
-        setTimeout(async () => {
-          resolve(await checkConnection());
-        }, 500);
-      });
-    };
-
-    const result = await checkConnection();
-    if (result.status === "connected") {
-      res.status(200).json({ message: "Broker connected successfully", brokerId });
-    } else {
-      res.status(400).json({ message: result.error || "Failed to connect to broker", brokerId });
-    }
-  } catch (error) {
-    console.error(`[User: ${req.userId}] Error processing connection request: ${error.message}`);
-    res.status(400).json({
-      message: "Failed to process connection request",
-      error: error.message,
-    });
-  }
-});
-
-router.delete("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async (req, res) => {
-  try {
-    const { brokerId } = req.params;
-    console.log(`[User: ${req.userId}] Processing delete request for broker ${brokerId}`);
+    console.log(`[User: ${req.userId}] Deleting broker ${brokerId}`);
 
     const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
     if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
-      return res.status(404).json({ message: "Broker not found" });
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found or not owned by user`);
+      return res.status(404).json({ message: "Broker not found or you lack permission" });
     }
 
-    await Broker.deleteOne({ _id: brokerId, userId: req.userId });
-    console.log(`[User: ${req.userId}] Broker ${brokerId} deleted from database`);
-
+    await broker.deleteOne();
     const key = `${req.userId}_${brokerId}`;
     const mqttHandler = req.mqttHandlers.get(key);
     if (mqttHandler) {
-      console.log(`[User: ${req.userId}] Disconnecting MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
-      mqttHandler.disconnect();
+      await mqttHandler.disconnect();
       req.mqttHandlers.delete(key);
-      console.log(`[User: ${req.userId}] MQTT handler for broker ${brokerId} removed`);
+      req.connectedBrokers.delete(key);
     }
 
+    console.log(`[User: ${req.userId}] Broker ${brokerId} deleted successfully`);
     res.status(200).json({ message: "Broker deleted successfully" });
   } catch (error) {
     console.error(`[User: ${req.userId}] Error deleting broker ${req.params.brokerId}: ${error.message}`);
@@ -305,46 +456,62 @@ router.delete("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), as
     });
   }
 });
-router.post("/brokers/:brokerId/publish", authMiddleware, async (req, res) => {
+
+// Subscribe to topic
+router.post("/brokers/:brokerId/subscribe", authMiddleware, async (req, res) => {
   try {
     const { brokerId } = req.params;
-    const { topic, message } = req.body;
-    console.log(`[User: ${req.userId}] Processing publish request for topic ${topic} on broker ${brokerId}`);
-    if (!topic || !message) {
-      console.error(`[User: ${req.userId}] Topic or message missing for publish on broker ${brokerId}`);
-      return res.status(400).json({ message: "Topic and message are required" });
+    const { topic } = req.body;
+    const userId = req.userId;
+    const user = await User.findById(userId);
+    const userEmail = user ? user.email : "Unknown";
+    console.log(`[User: ${userId} (${userEmail})] Subscribing to topic ${topic} on broker ${brokerId}`);
+
+    if (!topic) {
+      console.error(`[User: ${userId} (${userEmail})] Topic missing for subscription on broker ${brokerId}`);
+      return res.status(400).json({ message: "Topic is required" });
     }
 
-    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    const broker = await Broker.findOne({ _id: brokerId });
     if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
+      console.error(`[User: ${userId} (${userEmail})] Broker ${brokerId} not found`);
       return res.status(404).json({ message: "Broker not found" });
     }
 
     const key = `${req.userId}_${brokerId}`;
-    const mqttHandler = req.mqttHandlers.get(key);
+    let mqttHandler = req.mqttHandlers.get(key);
+
     if (!mqttHandler || !mqttHandler.isConnected()) {
-      console.error(`[User: ${req.userId}] MQTT handler not found or not connected for broker ${brokerId}`);
-      return res.status(400).json({ message: "MQTT client not connected" });
+      console.log(`[User: ${userId} (${userEmail})] Initializing or reconnecting MQTT handler for ${key}`);
+      const connected = await connectBroker(broker, userId, req.mqttHandlers, req.connectedBrokers);
+      if (!connected) {
+        console.error(`[User: ${userId} (${userEmail})] Failed to initialize MQTT handler for ${key}`);
+        return res.status(500).json({ message: "Failed to initialize MQTT connection" });
+      }
+      mqttHandler = req.mqttHandlers.get(key);
     }
 
-    mqttHandler.publish(topic, message);
-    res.status(200).json({ message: `Published to topic ${topic}`, brokerId });
+    mqttHandler.subscribe(topic);
+    console.log(`[User: ${userId} (${userEmail})] Subscribed to topic ${topic} on broker ${brokerId}`);
+    res.status(200).json({ message: `Subscribed to topic ${topic}`, brokerId });
   } catch (error) {
-    console.error(`[User: ${req.userId}] Error processing publish: ${error.message}`);
-    res.status(400).json({
-      message: "Failed to publish message",
+    const user = await User.findById(req.userId);
+    const userEmail = user ? user.email : "Unknown";
+    console.error(`[User: ${req.userId} (${userEmail})] Error subscribing to topic: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to subscribe to topic",
       error: error.message,
     });
   }
 });
 
-router.post("/brokers/:brokerId/disconnect", authMiddleware, restrictToadmin("admin"), async (req, res) => {
+// Disconnect from broker
+router.post("/brokers/:brokerId/disconnect", authMiddleware, restrictToadmin('admin'), async (req, res) => {
   try {
     const { brokerId } = req.params;
-    console.log(`[User: ${req.userId}] Processing disconnect request for broker ${brokerId}`);
+    console.log(`[User: ${req.userId}] Disconnecting from broker ${brokerId}`);
 
-    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    const broker = await Broker.findById(brokerId);
     if (!broker) {
       console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
       return res.status(404).json({ message: "Broker not found" });
@@ -353,22 +520,21 @@ router.post("/brokers/:brokerId/disconnect", authMiddleware, restrictToadmin("ad
     const key = `${req.userId}_${brokerId}`;
     const mqttHandler = req.mqttHandlers.get(key);
     if (mqttHandler) {
-      console.log(`[User: ${req.userId}] Disconnecting MQTT handler for broker ${brokerId} (IP: ${broker.brokerIp})`);
       mqttHandler.disconnect();
       req.mqttHandlers.delete(key);
-      console.log(`[User: ${req.userId}] MQTT handler for broker ${brokerId} removed`);
+      req.connectedBrokers.delete(key);
+      console.log(`[User: ${req.userId}] MQTT handler disconnected and removed for ${key}`);
     }
 
-    await Broker.updateOne(
-      { _id: brokerId, userId: req.userId },
-      { connectionStatus: "disconnected" }
-    );
+    broker.connectionStatus = "disconnected";
+    await broker.save();
 
-    res.status(200).json({ message: "Broker disconnected successfully", brokerId });
+    console.log(`[User: ${req.userId}] Broker ${brokerId} disconnected successfully`);
+    res.status(200).json({ message: "Broker disconnected successfully" });
   } catch (error) {
-    console.error(`[User: ${req.userId}] Error disconnecting broker ${brokerId}: ${error.message}`);
-    res.status(400).json({
-      message: "Failed to disconnect broker",
+    console.error(`[User: ${req.userId}] Error disconnecting from broker ${req.params.brokerId}: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to disconnect from broker",
       error: error.message,
     });
   }

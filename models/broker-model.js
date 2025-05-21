@@ -18,12 +18,24 @@ const brokerSchema = new mongoose.Schema({
     default: 'disconnected',
   },
   userId: {
-    type: String, // The admin who created the broker
+    type: String,
     required: true,
   },
   assignedUserId: {
-    type: String, // The user assigned to this broker
+    type: String,
     default: null,
+  },
+  username: {
+    type: String,
+    default: '',
+  },
+  password: {
+    type: String,
+    default: '',
+  },
+  connectionTime: {
+    type: Date,
+    default: null, // Set to null initially, updated when connected
   },
 });
 
