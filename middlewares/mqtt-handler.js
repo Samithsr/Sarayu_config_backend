@@ -1,4 +1,3 @@
-// File: middlewares/mqtt-handler.js
 const mqtt = require("mqtt");
 
 class MqttHandler {
@@ -22,15 +21,18 @@ class MqttHandler {
     console.log(`[User: ${this.userId}] MQTT handler initialized for ${this.clientId} (Broker ID: ${broker._id}, IP: ${broker.brokerIp})`);
   }
 
-  isValidIPv4(ip) {
+  isValidBrokerAddress(ip) {
+    if (ip === "localhost" || ip === "127.0.0.1") {
+      return true;
+    }
     const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
     return ipv4Regex.test(ip);
   }
 
   async testConnection(port) {
     return new Promise((resolve) => {
-      if (!this.isValidIPv4(this.broker.brokerIp)) {
-        console.error(`[User: ${this.userId}] Invalid IP address: ${this.broker.brokerIp} for client ${this.clientId}`);
+      if (!this.isValidBrokerAddress(this.broker.brokerIp)) {
+        console.error(`[User: ${this.userId}] Invalid broker address: ${this.broker.brokerIp} for client ${this.clientId}`);
         resolve(false);
         return;
       }
@@ -41,7 +43,7 @@ class MqttHandler {
         clientId,
         username: this.broker.username || "",
         password: this.broker.password || "",
-        connectTimeout: 5 * 1000,
+        connectTimeout: 10 * 1000, // Increased timeout
       };
 
       console.log(`[User: ${this.userId}] Testing connection to ${brokerUrl} for client ${clientId}`);
@@ -83,8 +85,8 @@ class MqttHandler {
         return;
       }
 
-      if (!this.isValidIPv4(this.broker.brokerIp)) {
-        console.error(`[User: ${this.userId}] Invalid IP address: ${this.broker.brokerIp} for client ${this.clientId} (Broker ID: ${this.broker._id})`);
+      if (!this.isValidBrokerAddress(this.broker.brokerIp)) {
+        console.error(`[User: ${this.userId}] Invalid broker address: ${this.broker.brokerIp} for client ${this.clientId} (Broker ID: ${this.broker._id})`);
         this.connectionStatus = "disconnected";
         resolve(false);
         return;
@@ -106,7 +108,7 @@ class MqttHandler {
         username: this.broker.username || "",
         password: this.broker.password || "",
         reconnectPeriod: 0,
-        connectTimeout: 30 * 1000,
+        connectTimeout: 10 * 1000, // Increased timeout
         keepalive: 60,
       };
 
