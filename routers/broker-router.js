@@ -1,3 +1,4 @@
+// routers/broker-router.js
 const express = require("express");
 const router = express.Router();
 const Broker = require("../models/broker-model");
@@ -178,7 +179,7 @@ router.get("/brokers/assigned", authMiddleware, async (req, res) => {
     }
 
     if (broker.connectionStatus !== "connected") {
-      console.log(`[User: ${userId}] Auto-connecting broker ${broker._id}`);
+      consoles.log(`[User: ${userId}] Auto-connecting broker ${broker._id}`);
       const result = await connectBroker(broker, userId, req.mqttHandlers, req.connectedBrokers);
       if (!result.connected) {
         return res.status(500).json({ message: "Failed to auto-connect broker", error: result.error });
@@ -371,7 +372,7 @@ router.post("/brokers", authMiddleware, restrictToadmin('admin'), async (req, re
       password: password || "",
       label,
       userId: req.userId,
-      connectionStatus: "disconnected", // Explicitly set
+      connectionStatus: "disconnected",
     });
 
     await broker.save();
@@ -429,7 +430,7 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin('admin'), async
     broker.username = username || "";
     broker.password = password || "";
     broker.label = label;
-    broker.connectionStatus = "disconnected"; // Reset on update
+    broker.connectionStatus = "disconnected";
 
     await broker.save();
     console.log(`[User: ${req.userId}] Broker ${brokerId} updated successfully`);
@@ -553,6 +554,44 @@ router.post("/brokers/:brokerId/disconnect", authMiddleware, restrictToadmin('ad
     console.error(`[User: ${req.userId}] Error disconnecting from broker ${req.params.brokerId}: ${error.message}`);
     res.status(500).json({
       message: "Failed to disconnect from broker",
+      error: error.message,
+    });
+  }
+});
+
+// Disconnect all brokers for the user (restricted to admins)
+router.post("/brokers/disconnect-all", authMiddleware, restrictToadmin('admin'), async (req, res) => {
+  try {
+    const userId = req.userId;
+    console.log(`[User: ${userId}] Disconnecting all brokers`);
+
+    // Find all brokers created by the user
+    const brokers = await Broker.find({ userId });
+    if (!brokers || brokers.length === 0) {
+      console.log(`[User: ${userId}] No brokers found for user`);
+      return res.status(200).json({ message: "No brokers to disconnect" });
+    }
+
+    // Disconnect each broker and clean up MQTT handlers
+    for (const broker of brokers) {
+   const key = `${userId}_${broker._id}`;
+      const mqttHandler = req.mqttHandlers.get(key);
+      if (mqttHandler) {
+        mqttHandler.disconnect();
+        req.mqttHandlers.delete(key);
+        req.connectedBrokers.delete(key);
+        console.log(`[User: ${userId}] Disconnected and removed MQTT handler for ${key}`);
+      }
+      broker.connectionStatus = "disconnected";
+      await broker.save();
+      console.log(`[User: ${userId}] Broker ${broker._id} disconnected successfully`);
+    }
+
+    res.status(200).json({ message: "All brokers disconnected successfully" });
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error disconnecting all brokers: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to disconnect all brokers",
       error: error.message,
     });
   }
