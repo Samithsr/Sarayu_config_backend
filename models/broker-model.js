@@ -1,9 +1,10 @@
+// broker-model.js
 const mongoose = require('mongoose');
 
 const brokerSchema = new mongoose.Schema({
   brokerIp: {
     type: String,
-    required: true,
+    required: false,
   },
   portNumber: {
     type: Number,
@@ -35,7 +36,11 @@ const brokerSchema = new mongoose.Schema({
   },
   connectionTime: {
     type: Date,
-    default: null, // Set to null initially, updated when connected
+    default: null,
+  },
+  lastValidationError: {
+    type: String,
+    default: null,
   },
 });
 
