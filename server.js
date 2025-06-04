@@ -2,9 +2,11 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const mqtt = require("mqtt"); // Add mqtt package
 const authRouter = require("./routers/auth-router");
 const brokerRouter = require("./routers/broker-router");
 const configRouter = require("./routers/config-router");
+const publishRouter = require("./routers/publish-route");
 const http = require("http");
 
 const app = express();
@@ -34,6 +36,35 @@ app.use(cors({
 app.use('/api/auth', authRouter);
 app.use('/api', brokerRouter);
 app.use('/api', configRouter);
+app.use('/api/pub', publishRouter);
+
+// Initialize MQTT Client
+const setupMqttClient = () => {
+  const brokerUrl = "mqtt://localhost:1883"; // Replace with your MQTT broker URL
+  const clientId = `server_${Math.random().toString(16).slice(3)}`;
+  const client = mqtt.connect(brokerUrl, { clientId });
+
+  client.on("connect", () => {
+    console.log(`Connected to MQTT broker at ${brokerUrl}`);
+    mqttHandlers.set(clientId, client);
+    connectedBrokers.set(clientId, { client, url: brokerUrl });
+  });
+
+  client.on("error", (err) => {
+    console.error(`MQTT connection error for ${brokerUrl}:`, err.message);
+  });
+
+  client.on("close", () => {
+    console.log(`Disconnected from MQTT broker at ${brokerUrl}`);
+    mqttHandlers.delete(clientId);
+    connectedBrokers.delete(clientId);
+  });
+
+  return client;
+};
+
+// Connect to MQTT broker on startup
+setupMqttClient();
 
 // MongoDB Connection
 mongoose
@@ -63,7 +94,7 @@ process.on("SIGINT", () => {
   console.log("Shutting down server...");
   mqttHandlers.forEach((handler, key) => {
     console.log(`Cleaning up MQTT handler for ${key}`);
-    handler.disconnect();
+    handler.end(); // Use .end() to properly close MQTT client
   });
   mqttHandlers.clear();
   connectedBrokers.clear();
