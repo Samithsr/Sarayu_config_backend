@@ -2,6 +2,7 @@
 const express = require("express");
 const mqtt = require("mqtt");
 const router = express.Router();
+const Brokerodel = require("../models/broker-model")
 
 // POST route to handle publishing MQTT messages
 router.post("/publish", async (req, res) => {
@@ -51,5 +52,14 @@ router.post("/publish", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+router.get('/get-all-brokers',async(req,res)=>{
+  try {
+    const brokers = await Brokerodel.find({},{brokerIp : 1})
+    res.status(200).json({success:false,data:brokers})
+  } catch (error) {
+    res.status(500).json({success:false,message : error.message})
+  }
+})
 
 module.exports = router;

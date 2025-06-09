@@ -553,7 +553,7 @@ router.post("/brokers", authMiddleware, restrictToadmin("admin"), async (req, re
 router.get("/brokers", authMiddleware, async (req, res) => {
   try {
     console.log(`[User: ${req.userId}] Fetching brokers`);
-    const brokers = await Broker.find({ userId: req.userId }).populate("assignedUserId", "email");
+    const brokers = await Broker.find({ }).populate("assignedUserId", "email");
     res.status(200).json(brokers);
   } catch (error) {
     console.error(`[User: ${req.userId}] Error fetching brokers: ${error.message}`);
