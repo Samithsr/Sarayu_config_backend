@@ -20,7 +20,15 @@ router.post("/subscribe", async (req, res) => {
     console.log("Available mqttHandlers:", Array.from(mqttHandlers.keys()));
     console.log("Available connectedBrokers:", Array.from(connectedBrokers.keys()));
 
-    const mqttClient = Array.from(mqttHandlers.values())[0] || Array.from(connectedBrokers.values())[0]?.client;
+    // Use the brokerId from the first inputSet (assuming single broker for all topics)
+    const brokerId = inputSets[0]?.brokerId;
+    if (!brokerId) {
+      console.error("No brokerId provided in inputSets");
+      return res.status(400).json({ error: "Broker ID is required" });
+    }
+
+    const mqttClient = Array.from(mqttHandlers.values())[0] || 
+                      Array.from(connectedBrokers.values()).find(b => b.client)?.client;
 
     if (!mqttClient) {
       console.error("No MQTT client available");
@@ -77,7 +85,6 @@ router.post("/subscribe", async (req, res) => {
 
 // GET endpoint to fetch stored messages
 router.get("/messages", (req, res) => {
-//   console.log("Received request at /api/messages");
   res.status(200).json({ messages });
 });
 
