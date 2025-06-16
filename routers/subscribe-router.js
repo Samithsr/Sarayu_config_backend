@@ -84,7 +84,7 @@ router.post("/subscribe", async (req, res) => {
 });
 
 // GET endpoint to fetch stored messages
-router.get("/messages", (req, res) => {
+router.get("/messages", (req, res) =>{ 
   res.status(200).json({ messages });
 });
 
