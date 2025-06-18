@@ -2,7 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
-const mqtt = require("mqtt"); // Add MQTT client library
+const mqtt = require("mqtt");
 
 const router = express.Router();
 
@@ -58,7 +58,7 @@ router.get("/get-all-versions", (req, res) => {
   }
 });
 
-// New publish endpoint
+// Publish endpoint
 router.post("/publish", async (req, res) => {
   const { brokerIp, topic, message } = req.body;
 
@@ -66,13 +66,19 @@ router.post("/publish", async (req, res) => {
     return res.status(400).json({ success: false, message: "Broker IP, topic, and message are required" });
   }
 
+  // Validate brokerIp format (basic IP address check)
+  const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  if (!ipRegex.test(brokerIp)) {
+    return res.status(400).json({ success: false, message: "Invalid broker IP format" });
+  }
+
   try {
-    // Connect to MQTT broker
-    const client = mqtt.connect(`mqtt://${brokerIp}`);
-    
+    // Connect to MQTT broker with timeout
+    const client = mqtt.connect(`mqtt://${brokerIp}`, { connectTimeout: 5000 });
+
     client.on("connect", () => {
       console.log(`Connected to MQTT broker at ${brokerIp}`);
-      
+
       // Publish message
       client.publish(topic, message, { qos: 0 }, (error) => {
         if (error) {
@@ -80,17 +86,17 @@ router.post("/publish", async (req, res) => {
           client.end();
           return res.status(500).json({ success: false, message: "Failed to publish message" });
         }
-        
-        console.log(`Published message to topic ${topic} on broker ${brokerIp}`);
+
+        console.log(`Published URL "${message}" to topic "${topic}" on broker ${brokerIp}`);
         client.end();
-        res.status(200).json({ success: true, message: "Message published successfully" });
+        res.status(200).json({ success: true, message: `Published URL "${message}" successfully` });
       });
     });
 
     client.on("error", (error) => {
       console.error("MQTT connection error:", error);
       client.end();
-      res.status(500).json({ success: false, message: "MQTT connection error" });
+      res.status(500).json({ success: false, message: `MQTT connection error: ${error.message}` });
     });
 
   } catch (error) {
