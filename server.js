@@ -3,17 +3,25 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const mqtt = require("mqtt");
 const WebSocket = require("ws");
+const http = require("http");
 const authRouter = require("./routers/auth-router");
 const brokerRouter = require("./routers/broker-router");
 const configRouter = require("./routers/config-router");
 const publishRouter = require("./routers/publish-route");
 const wifiRouter = require("./routers/wi-fiUser");
 const subscribeRouter = require("./routers/subscribe-router");
-const firmware = require("./routers/firmware")
-const http = require("http");
+const firmware = require("./routers/firmware-router");
 
 const app = express();
 const server = http.createServer(app);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
 
 // WebSocket server
 const wss = new WebSocket.Server({ server });
@@ -49,14 +57,6 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
-
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api', brokerRouter);
@@ -64,13 +64,20 @@ app.use('/api', configRouter);
 app.use('/api/pub', publishRouter);
 app.use('/api', wifiRouter);
 app.use('/api', subscribeRouter);
-app.use('/api', firmware);
+app.use('/api', firmware); // Use 'firmware' instead of 'firmwareRoutes'
 
 // Initialize MQTT Client
 const setupMqttClient = () => {
-  const brokerUrl = "mqtt://localhost:1883"; // Replace with your MQTT broker URL
+  const brokerUrl = "mqtt://localhost:1883"; // Replace with your MQTT broker URL if different
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
-  const client = mqtt.connect(brokerUrl, { clientId });
+  const mqttUsername = "your_mqtt_username"; // Replace with actual MQTT username
+  const mqttPassword = "your_mqtt_password"; // Replace with actual MQTT password
+  const client = mqtt.connect(brokerUrl, {
+    clientId,
+    username: mqttUsername,
+    password: mqttPassword,
+    connectTimeout: 5000,
+  });
 
   client.on("connect", () => {
     console.log(`Connected to MQTT broker at ${brokerUrl} with clientId ${clientId}`);
