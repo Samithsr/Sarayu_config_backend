@@ -48,7 +48,7 @@ router.post("/upload", upload.single("file"), (req, res) => {
 router.get("/get-all-versions", (req, res) => {
   try {
     const { ip } = req.query; // Get IP from query parameter
-    const host = ip || "localhost"; // Fallback to localhost if no IP provided
+    const host = "192.168.1.6"; // Use server IP from middleware
     const dir = path.join(__dirname, "../firmware");
     const data = fs.readdirSync(dir, "utf-8");
     const result = data.map((item) => `http://${host}:5000/api/updates/${item}`);
@@ -82,9 +82,14 @@ router.get("/download/:filename", (req, res) => {
     // Set headers for file download
     res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
     res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition"); // Expose for CORS
 
     // Stream the file
     const fileStream = fs.createReadStream(filePath);
+    fileStream.on("error", (error) => {
+      console.error("File stream error:", error);
+      res.status(500).json({ success: false, message: "Error streaming file" });
+    });
     fileStream.pipe(res);
 
     console.log(`Serving file for download: ${filename}`);
@@ -174,7 +179,12 @@ router.post("/publish", async (req, res) => {
   }
 });
 
-// Serve static files
-router.use("/updates", express.static(path.join(__dirname, "../firmware")));
+// Serve static files with CORS
+router.use("/updates", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+  console.log("Dirname : ",__dirname)
+  next();
+}, express.static(path.join(__dirname, "../firmware")));
 
 module.exports = router;

@@ -11,16 +11,24 @@ const publishRouter = require("./routers/publish-route");
 const wifiRouter = require("./routers/wi-fiUser");
 const subscribeRouter = require("./routers/subscribe-router");
 const firmware = require("./routers/firmware-router");
+const path = require("path")
 
 const app = express();
 const server = http.createServer(app);
 
+// Load environment variables
+require('dotenv').config();
+const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username"; // Set in .env file
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password"; // Set in .env file
+const SERVER_IP = process.env.SERVER_IP || "localhost"; // Set to 3.111.87.2 for external access
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cors({
-  origin: "*",
+  origin: "*", // Allow all origins for simplicity; restrict in production
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["Content-Disposition"], // Allow clients to access download headers
 }));
 
 // WebSocket server
@@ -49,11 +57,12 @@ const mqttHandlers = new Map();
 const connectedBrokers = new Map();
 const userEmailCache = new Map();
 
-// Middleware to attach mqttHandlers, connectedBrokers, and wsClients to req
+// Middleware to attach mqttHandlers, connectedBrokers, wsClients, and server IP to req
 app.use((req, res, next) => {
   req.mqttHandlers = mqttHandlers;
   req.connectedBrokers = connectedBrokers;
   req.wsClients = wsClients;
+  req.serverIp = SERVER_IP; // Pass server IP to routes
   next();
 });
 
@@ -64,18 +73,16 @@ app.use('/api', configRouter);
 app.use('/api/pub', publishRouter);
 app.use('/api', wifiRouter);
 app.use('/api', subscribeRouter);
-app.use('/api', firmware); // Use 'firmware' instead of 'firmwareRoutes'
+app.use('/api', firmware);
 
 // Initialize MQTT Client
 const setupMqttClient = () => {
-  const brokerUrl = "mqtt://localhost:1883"; // Replace with your MQTT broker URL if different
+  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883"; // Set in .env file
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
-  const mqttUsername = "your_mqtt_username"; // Replace with actual MQTT username
-  const mqttPassword = "your_mqtt_password"; // Replace with actual MQTT password
   const client = mqtt.connect(brokerUrl, {
     clientId,
-    username: mqttUsername,
-    password: mqttPassword,
+    username: MQTT_USERNAME,
+    password: MQTT_PASSWORD,
     connectTimeout: 5000,
   });
 
@@ -109,10 +116,10 @@ setupMqttClient();
 
 // MongoDB Connection
 mongoose
-  .connect("mongodb://localhost:27017/gateway")
+  .connect(process.env.MONGO_URI || "mongodb://localhost:27017/gateway")
   .then(() => {
     console.log("Database connection successful!");
-    const PORT = 5000;
+    const PORT = process.env.PORT || 5000;
     server.listen(PORT, () => {
       console.log(`Listening on port ${PORT}`);
     });
