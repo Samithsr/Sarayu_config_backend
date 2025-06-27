@@ -10,58 +10,56 @@ router.post("/subscribe", async (req, res) => {
 
   try {
     const { inputSets } = req.body;
-    const { mqttHandlers, connectedBrokers } = req;
 
     if (!Array.isArray(inputSets) || inputSets.length === 0) {
       console.error("Invalid or empty inputSets:", inputSets);
       return res.status(400).json({ error: "Invalid or empty inputSets" });
     }
 
-    console.log("Available mqttHandlers:", Array.from(mqttHandlers.keys()));
-    console.log("Available connectedBrokers:", Array.from(connectedBrokers.keys()));
-
-    // Use the brokerId from the first inputSet (assuming single broker for all topics)
-    const brokerId = inputSets[0]?.brokerId;
-    if (!brokerId) {
-      console.error("No brokerId provided in inputSets");
-      return res.status(400).json({ error: "Broker ID is required" });
+    // Use the brokerIp from the first inputSet (assuming single broker for all topics)
+    const { brokerIp, mqttUsername, mqttPassword } = inputSets[0];
+    if (!brokerIp) {
+      console.error("No brokerIp provided in inputSets");
+      return res.status(400).json({ error: "Broker IP is required" });
     }
 
-    const mqttClient = Array.from(mqttHandlers.values())[0] || 
-                      Array.from(connectedBrokers.values()).find(b => b.client)?.client;
+    // Create MQTT connection options
+    const options = {
+      username: mqttUsername || undefined,
+      password: mqttPassword || undefined,
+      clientId: `subscribe_${Math.random().toString(16).slice(3)}`,
+    };
 
-    if (!mqttClient) {
-      console.error("No MQTT client available");
-      return res.status(503).json({ error: "No MQTT client available" });
-    }
+    // Connect to the MQTT broker
+    const mqttClient = mqtt.connect(`mqtt://${brokerIp}`, options);
 
-    if (!mqttClient.connected) {
-      console.error("MQTT client is not connected");
-      return res.status(503).json({ error: "MQTT client is not connected" });
-    }
+    mqttClient.on("connect", () => {
+      console.log(`Connected to MQTT broker: ${brokerIp}`);
 
-    // Subscribe to each topic
-    for (const { topicFilter, qosLevel } of inputSets) {
-      if (!topicFilter) {
-        console.warn("Skipping invalid topic filter:", topicFilter);
-        continue;
-      }
-
-      const qos = parseInt(qosLevel, 10);
-      if (![0, 1, 2].includes(qos)) {
-        console.warn(`Invalid QoS level ${qosLevel} for topic ${topicFilter}, defaulting to 0`);
-      }
-
-      mqttClient.subscribe(topicFilter, { qos: qos || 0 }, (err) => {
-        if (err) {
-          console.error(`Failed to subscribe to topic ${topicFilter}:`, err.message);
-        } else {
-          console.log(`Subscribed to topic: ${topicFilter}, QoS: ${qos}`);
+      // Subscribe to each topic
+      for (const { topicFilter, qosLevel } of inputSets) {
+        if (!topicFilter) {
+          console.warn("Skipping invalid topic filter:", topicFilter);
+          continue;
         }
-      });
-    }
 
-    // Store received messages
+        const qos = parseInt(qosLevel, 10);
+        if (![0, 1, 2].includes(qos)) {
+          console.warn(`Invalid QoS level ${qosLevel} for topic ${topicFilter}, defaulting to 0`);
+        }
+
+        mqttClient.subscribe(topicFilter, { qos: qos || 0 }, (err) => {
+          if (err) {
+            console.error(`Failed to subscribe to topic ${topicFilter}:`, err.message);
+          } else {
+            console.log(`Subscribed to topic: ${topicFilter}, QoS: ${qos}, Broker: ${brokerIp}`);
+          }
+        });
+      }
+
+      res.status(200).json({ message: "Subscribed successfully" });
+    });
+
     mqttClient.on("message", (topic, payload, packet) => {
       const message = {
         topic,
@@ -76,7 +74,12 @@ router.post("/subscribe", async (req, res) => {
       }
     });
 
-    res.status(200).json({ message: "Subscribed successfully" });
+    mqttClient.on("error", (err) => {
+      console.error(`MQTT connection error for broker ${brokerIp}:`, err.message);
+      mqttClient.end();
+      res.status(500).json({ error: `MQTT connection error: ${err.message}` });
+    });
+
   } catch (error) {
     console.error("Error in subscribe route:", error.message);
     res.status(500).json({ error: "Internal server error: " + error.message });
@@ -84,7 +87,7 @@ router.post("/subscribe", async (req, res) => {
 });
 
 // GET endpoint to fetch stored messages
-router.get("/messages", (req, res) =>{ 
+router.get("/messages", (req, res) => {
   res.status(200).json({ messages });
 });
 
