@@ -11,6 +11,7 @@ const publishRouter = require("./routers/publish-route");
 const wifiRouter = require("./routers/wi-fiUser");
 const subscribeRouter = require("./routers/subscribe-router");
 const firmware = require("./routers/firmware-router");
+const location = require("./routers/location")
 const path = require("path")
 
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/pub', publishRouter);
 app.use('/api', wifiRouter);
 app.use('/api', subscribeRouter);
 app.use('/api', firmware);
+app.use('./api', location)
 
 // Initialize MQTT Client
 const setupMqttClient = () => {
