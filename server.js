@@ -115,6 +115,9 @@ const setupMqttClient = () => {
 
 // Connect to MQTT broker on startup
 setupMqttClient();
+server.listen(5000, () => {
+  console.log(`Listening on port ${5000}`);
+});
 
 // MongoDB Connection
 mongoose
@@ -122,9 +125,6 @@ mongoose
   .then(() => {
     console.log("Database connection successful!");
     const PORT = process.env.PORT || 5000;
-    server.listen(PORT, () => {
-      console.log(`Listening on port ${PORT}`);
-    });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
         console.error(`Port ${PORT} is already in use.`);
