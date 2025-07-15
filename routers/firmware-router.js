@@ -77,7 +77,7 @@ router.delete("/delete/:filename", (req, res) => {
 router.get("/get-all-versions", (req, res) => {
   try {
     const { ip } = req.query; // Get IP from query parameter
-    const host = "192.168.1.14"; // Use server IP from middleware
+    const host = "3.110.131.251"; // Use server IP from middleware
     const dir = path.join(__dirname, "../firmware");
     const data = fs.readdirSync(dir, "utf-8");
     const result = data.map((item) => `http://${host}:5000/api/updates/${item}`);
