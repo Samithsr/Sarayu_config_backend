@@ -5,15 +5,12 @@ const restrictToadmin = (...allowedRoles) => {
       return res.status(403).json({ message: "Access denied: Role not found" });
     }
 
-    const userRoles = Array.isArray(req.userRole) ? req.userRole : [req.userRole];
-    const hasPermission = allowedRoles.some((role) => userRoles.includes(role));
-
-    if (!hasPermission) {
-      console.error(`[RBAC] User: ${req.userId} (Roles: ${JSON.stringify(userRoles)}) attempted to access restricted route. Allowed roles: ${allowedRoles}`);
+    if (!allowedRoles.includes(req.userRole)) {
+      console.error(`[RBAC] User: ${req.userId} (Role: ${req.userRole}) attempted to access restricted route`);
       return res.status(403).json({ message: "Access denied: Insufficient permissions" });
     }
 
-    console.log(`[RBAC] User: ${req.userId} (Roles: ${JSON.stringify(userRoles)}) granted access`);
+    console.log(`[RBAC] User: ${req.userId} (Role: ${req.userRole}) granted access`);
     next();
   };
 };
