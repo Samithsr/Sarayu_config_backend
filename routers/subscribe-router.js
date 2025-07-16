@@ -1,3 +1,4 @@
+
 const express = require("express");
 const mqtt = require("mqtt");
 const router = express.Router();
@@ -72,6 +73,16 @@ router.post("/subscribe", async (req, res) => {
       if (messages.length > 100) {
         messages.shift();
       }
+      // Broadcast the new message to all connected WebSocket clients
+      req.wsClients.forEach((client) => {
+        if (client.readyState === client.OPEN) {
+          try {
+            client.send(JSON.stringify({ event: "newMessage", data: message }));
+          } catch (error) {
+            console.error("Error sending message to WebSocket client:", error.message);
+          }
+        }
+      });
     });
 
     mqttClient.on("error", (err) => {

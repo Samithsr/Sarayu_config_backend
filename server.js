@@ -1,3 +1,4 @@
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -11,32 +12,51 @@ const publishRouter = require("./routers/publish-route");
 const wifiRouter = require("./routers/wi-fiUser");
 const subscribeRouter = require("./routers/subscribe-router");
 const firmware = require("./routers/firmware-router");
-const location = require("./routers/location")
-const path = require("path")
+const location = require("./routers/location");
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
 
 // Load environment variables
-require('dotenv').config();
+require("dotenv").config();
 const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username"; // Set in .env file
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password"; // Set in .env file
 const SERVER_IP = process.env.SERVER_IP || "localhost"; // Set to 3.111.87.2 for external access
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(cors({
-  origin: "*", // Allow all origins for simplicity; restrict in production
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  exposedHeaders: ["Content-Disposition"], // Allow clients to access download headers
-}));
+app.use(
+  cors({
+    origin: "*", // Allow all origins for simplicity; restrict in production
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["Content-Disposition"], // Allow clients to access download headers
+  })
+);
 
 // WebSocket server
 const wss = new WebSocket.Server({ server });
 const wsClients = []; // Store WebSocket clients
 
-wss.on("connection", (ws) => {
+// Simple token verification function (replace with your auth logic)
+const verifyToken = async (token) => {
+  // Replace this with your actual token verification logic from authRouter
+  // For example, check against a user database or JWT verification
+  return !!token; // Placeholder: assumes token is valid if present
+};
+
+wss.on("connection", async (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const token = url.searchParams.get("token");
+
+  if (!token || !(await verifyToken(token))) {
+    console.error("WebSocket connection rejected: Invalid or missing token");
+    ws.send(JSON.stringify({ event: "error", data: { message: "Unauthorized" } }));
+    ws.close(1008, "Unauthorized");
+    return;
+  }
+
   console.log("New WebSocket client connected");
   wsClients.push(ws);
 
@@ -68,14 +88,14 @@ app.use((req, res, next) => {
 });
 
 // Routes
-app.use('/api/auth', authRouter);
-app.use('/api', brokerRouter);
-app.use('/api', configRouter);
-app.use('/api/pub', publishRouter);
-app.use('/api', wifiRouter);
-app.use('/api', subscribeRouter);
-app.use('/api', firmware);
-app.use('./api', location)
+app.use("/api/auth", authRouter);
+app.use("/api", brokerRouter);
+app.use("/api", configRouter);
+app.use("/api/pub", publishRouter);
+app.use("/api", wifiRouter);
+app.use("/api", subscribeRouter);
+app.use("/api", firmware);
+app.use("/api", location);
 
 // Initialize MQTT Client
 const setupMqttClient = () => {
@@ -115,9 +135,6 @@ const setupMqttClient = () => {
 
 // Connect to MQTT broker on startup
 setupMqttClient();
-server.listen(5000, () => {
-  console.log(`Listening on port ${5000}`);
-});
 
 // MongoDB Connection
 mongoose
@@ -125,6 +142,9 @@ mongoose
   .then(() => {
     console.log("Database connection successful!");
     const PORT = process.env.PORT || 5000;
+    server.listen(PORT, () => {
+      console.log(`Listening on port ${PORT}`);
+    });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
         console.error(`Port ${PORT} is already in use.`);
