@@ -16,62 +16,52 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-
-// Initialize Socket.IO server
 const io = new Server(server, {
   cors: {
     origin: "*", // Allow all origins for simplicity; restrict in production
     methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"],
   },
 });
 
 // Load environment variables
 require("dotenv").config();
-const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username";
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password";
-const SERVER_IP = process.env.SERVER_IP || "3.110.131.251";
+const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username"; // Set in .env file
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password"; // Set in .env file
+const SERVER_IP = process.env.SERVER_IP || "3.110.131.251"; // Set to 3.111.87.2 for external access
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(
   cors({
-    origin: "*",
+    origin: "*", // Allow all origins for simplicity; restrict in production
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    exposedHeaders: ["Content-Disposition"],
+    exposedHeaders: ["Content-Disposition"], // Allow clients to access download headers
   })
 );
-
-// Store Socket.IO clients
-const ioClients = [];
 
 // Simple token verification function (replace with your auth logic)
 const verifyToken = async (token) => {
   // Replace this with your actual token verification logic from authRouter
+  // For example, check against a user database or JWT verification
   return !!token; // Placeholder: assumes token is valid if present
 };
 
-// Socket.IO authentication middleware
-io.use(async (socket, next) => {
-  const token = socket.handshake.auth.token;
+// Socket.IO connection handling
+io.on("connection", async (socket) => {
+  const token = socket.handshake.query.token;
+
   if (!token || !(await verifyToken(token))) {
     console.error("Socket.IO connection rejected: Invalid or missing token");
-    return next(new Error("Unauthorized"));
+    socket.emit("error", { message: "Unauthorized" });
+    socket.disconnect(true);
+    return;
   }
-  next();
-});
 
-io.on("connection", (socket) => {
   console.log("New Socket.IO client connected:", socket.id);
-  ioClients.push(socket);
 
   socket.on("disconnect", () => {
     console.log("Socket.IO client disconnected:", socket.id);
-    const index = ioClients.indexOf(socket);
-    if (index > -1) {
-      ioClients.splice(index, 1);
-    }
   });
 
   socket.on("error", (error) => {
@@ -79,13 +69,17 @@ io.on("connection", (socket) => {
   });
 });
 
-// Middleware to attach mqttHandlers, connectedBrokers, ioClients, and server IP to req
+// MQTT Client Management
+const mqttHandlers = new Map();
+const connectedBrokers = new Map();
+const userEmailCache = new Map();
+
+// Middleware to attach mqttHandlers, connectedBrokers, io, and server IP to req
 app.use((req, res, next) => {
   req.mqttHandlers = mqttHandlers;
   req.connectedBrokers = connectedBrokers;
-  req.ioClients = ioClients;
-  req.io = io; // Attach Socket.IO instance
-  req.serverIp = SERVER_IP;
+  req.io = io; // Attach Socket.IO instance instead of wsClients
+  req.serverIp = SERVER_IP; // Pass server IP to routes
   next();
 });
 
@@ -100,17 +94,13 @@ app.use("/api", firmware);
 app.use("/api", location);
 
 // Initialize MQTT Client
-const mqttHandlers = new Map();
-const connectedBrokers = new Map();
-const userEmailCache = new Map();
-
 const setupMqttClient = () => {
-  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://3.110.131.251:1883";
+  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://3.110.131.251:1883"; // Set in .env file
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
   const client = mqtt.connect(brokerUrl, {
     clientId,
-    username: MQTT_USERNAME,
-    password: MQTT_PASSWORD,
+    username: "Sarayu",
+    password: "IOTteam@123",
     connectTimeout: 5000,
   });
 
@@ -174,15 +164,14 @@ process.on("SIGINT", () => {
   });
   mqttHandlers.clear();
   connectedBrokers.clear();
-  ioClients.forEach((client) => client.disconnect(true));
   io.close(() => {
     console.log("Socket.IO server closed.");
-    server.close(() => {
-      console.log("Server closed.");
-      mongoose.connection.close(false, () => {
-        console.log("MongoDB connection closed.");
-        process.exit(0);
-      });
+  });
+  server.close(() => {
+    console.log("Server closed.");
+    mongoose.connection.close(false, () => {
+      console.log("MongoDB connection closed.");
+      process.exit(0);
     });
   });
 });

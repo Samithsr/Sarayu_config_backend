@@ -69,7 +69,7 @@ router.post("/subscribe", async (req, res) => {
       }
       
       // Broadcast to Socket.IO clients
-      req.io.emit('mqtt_message', message);
+      req.io.emit("mqtt_message", message);
     });
 
     mqttClient.on("error", (err) => {
