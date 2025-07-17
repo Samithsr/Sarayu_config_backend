@@ -1,10 +1,9 @@
-
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const mqtt = require("mqtt");
-const WebSocket = require("ws");
 const http = require("http");
+const { Server } = require("socket.io");
 const authRouter = require("./routers/auth-router");
 const brokerRouter = require("./routers/broker-router");
 const configRouter = require("./routers/config-router");
@@ -18,72 +17,75 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 
+// Initialize Socket.IO server
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Allow all origins for simplicity; restrict in production
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  },
+});
+
 // Load environment variables
 require("dotenv").config();
-const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username"; // Set in .env file
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password"; // Set in .env file
-const SERVER_IP = process.env.SERVER_IP || "localhost"; // Set to 3.111.87.2 for external access
+const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username";
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password";
+const SERVER_IP = process.env.SERVER_IP || "3.110.131.251";
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(
   cors({
-    origin: "*", // Allow all origins for simplicity; restrict in production
+    origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    exposedHeaders: ["Content-Disposition"], // Allow clients to access download headers
+    exposedHeaders: ["Content-Disposition"],
   })
 );
 
-// WebSocket server
-const wss = new WebSocket.Server({ server });
-const wsClients = []; // Store WebSocket clients
+// Store Socket.IO clients
+const ioClients = [];
 
 // Simple token verification function (replace with your auth logic)
 const verifyToken = async (token) => {
   // Replace this with your actual token verification logic from authRouter
-  // For example, check against a user database or JWT verification
   return !!token; // Placeholder: assumes token is valid if present
 };
 
-wss.on("connection", async (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const token = url.searchParams.get("token");
-
+// Socket.IO authentication middleware
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth.token;
   if (!token || !(await verifyToken(token))) {
-    console.error("WebSocket connection rejected: Invalid or missing token");
-    ws.send(JSON.stringify({ event: "error", data: { message: "Unauthorized" } }));
-    ws.close(1008, "Unauthorized");
-    return;
+    console.error("Socket.IO connection rejected: Invalid or missing token");
+    return next(new Error("Unauthorized"));
   }
+  next();
+});
 
-  console.log("New WebSocket client connected");
-  wsClients.push(ws);
+io.on("connection", (socket) => {
+  console.log("New Socket.IO client connected:", socket.id);
+  ioClients.push(socket);
 
-  ws.on("close", () => {
-    console.log("WebSocket client disconnected");
-    const index = wsClients.indexOf(ws);
+  socket.on("disconnect", () => {
+    console.log("Socket.IO client disconnected:", socket.id);
+    const index = ioClients.indexOf(socket);
     if (index > -1) {
-      wsClients.splice(index, 1);
+      ioClients.splice(index, 1);
     }
   });
 
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error);
+  socket.on("error", (error) => {
+    console.error("Socket.IO error:", error);
   });
 });
 
-// MQTT Client Management
-const mqttHandlers = new Map();
-const connectedBrokers = new Map();
-const userEmailCache = new Map();
-
-// Middleware to attach mqttHandlers, connectedBrokers, wsClients, and server IP to req
+// Middleware to attach mqttHandlers, connectedBrokers, ioClients, and server IP to req
 app.use((req, res, next) => {
   req.mqttHandlers = mqttHandlers;
   req.connectedBrokers = connectedBrokers;
-  req.wsClients = wsClients;
-  req.serverIp = SERVER_IP; // Pass server IP to routes
+  req.ioClients = ioClients;
+  req.io = io; // Attach Socket.IO instance
+  req.serverIp = SERVER_IP;
   next();
 });
 
@@ -98,8 +100,12 @@ app.use("/api", firmware);
 app.use("/api", location);
 
 // Initialize MQTT Client
+const mqttHandlers = new Map();
+const connectedBrokers = new Map();
+const userEmailCache = new Map();
+
 const setupMqttClient = () => {
-  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883"; // Set in .env file
+  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://3.110.131.251:1883";
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
   const client = mqtt.connect(brokerUrl, {
     clientId,
@@ -138,7 +144,7 @@ setupMqttClient();
 
 // MongoDB Connection
 mongoose
-  .connect(process.env.MONGO_URI || "mongodb://localhost:27017/gateway")
+  .connect(process.env.MONGO_URI || "mongodb://3.110.131.251:27017/gateway")
   .then(() => {
     console.log("Database connection successful!");
     const PORT = process.env.PORT || 5000;
@@ -168,12 +174,15 @@ process.on("SIGINT", () => {
   });
   mqttHandlers.clear();
   connectedBrokers.clear();
-  wsClients.forEach((client) => client.close());
-  server.close(() => {
-    console.log("Server closed.");
-    mongoose.connection.close(false, () => {
-      console.log("MongoDB connection closed.");
-      process.exit(0);
+  ioClients.forEach((client) => client.disconnect(true));
+  io.close(() => {
+    console.log("Socket.IO server closed.");
+    server.close(() => {
+      console.log("Server closed.");
+      mongoose.connection.close(false, () => {
+        console.log("MongoDB connection closed.");
+        process.exit(0);
+      });
     });
   });
 });

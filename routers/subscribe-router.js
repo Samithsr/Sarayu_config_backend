@@ -1,4 +1,3 @@
-
 const express = require("express");
 const mqtt = require("mqtt");
 const router = express.Router();
@@ -17,27 +16,23 @@ router.post("/subscribe", async (req, res) => {
       return res.status(400).json({ error: "Invalid or empty inputSets" });
     }
 
-    // Use the brokerIp from the first inputSet (assuming single broker for all topics)
     const { brokerIp, mqttUsername, mqttPassword } = inputSets[0];
     if (!brokerIp) {
       console.error("No brokerIp provided in inputSets");
       return res.status(400).json({ error: "Broker IP is required" });
     }
 
-    // Create MQTT connection options
     const options = {
       username: mqttUsername || undefined,
       password: mqttPassword || undefined,
       clientId: `subscribe_${Math.random().toString(16).slice(3)}`,
     };
 
-    // Connect to the MQTT broker
     const mqttClient = mqtt.connect(`mqtt://${brokerIp}`, options);
 
     mqttClient.on("connect", () => {
       console.log(`Connected to MQTT broker: ${brokerIp}`);
 
-      // Subscribe to each topic
       for (const { topicFilter, qosLevel } of inputSets) {
         if (!topicFilter) {
           console.warn("Skipping invalid topic filter:", topicFilter);
@@ -69,20 +64,12 @@ router.post("/subscribe", async (req, res) => {
       };
       console.log("Received MQTT message:", message);
       messages.push(message);
-      // Limit to 100 messages to prevent memory issues
       if (messages.length > 100) {
         messages.shift();
       }
-      // Broadcast the new message to all connected WebSocket clients
-      req.wsClients.forEach((client) => {
-        if (client.readyState === client.OPEN) {
-          try {
-            client.send(JSON.stringify({ event: "newMessage", data: message }));
-          } catch (error) {
-            console.error("Error sending message to WebSocket client:", error.message);
-          }
-        }
-      });
+      
+      // Broadcast to Socket.IO clients
+      req.io.emit('mqtt_message', message);
     });
 
     mqttClient.on("error", (err) => {
@@ -97,7 +84,6 @@ router.post("/subscribe", async (req, res) => {
   }
 });
 
-// GET endpoint to fetch stored messages
 router.get("/messages", (req, res) => {
   res.status(200).json({ messages });
 });
