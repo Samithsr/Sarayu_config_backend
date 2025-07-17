@@ -25,8 +25,8 @@ const io = new Server(server, {
 
 // Load environment variables
 require("dotenv").config();
-const MQTT_USERNAME = process.env.MQTT_USERNAME || "your_mqtt_username"; // Set in .env file
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "your_mqtt_password"; // Set in .env file
+const MQTT_USERNAME = process.env.MQTT_USERNAME || "Sarayu"; // Set in .env file
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "IOTteam@123"; // Set in .env file
 const SERVER_IP = process.env.SERVER_IP || "3.110.131.251"; // Set to 3.111.87.2 for external access
 
 app.use(express.json());
