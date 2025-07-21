@@ -175,6 +175,78 @@ const connectBroker = async (broker, userId, mqttHandlers, connectedBrokers) => 
   }
 };
 
+// Check broker connectivity status by IP
+router.post("/check-broker-status", authMiddleware, async (req, res) => {
+  try {
+    const { brokerIp } = req.body;
+    const userId = req.userId;
+    
+    if (!brokerIp) {
+      return res.status(400).json({ 
+        connected: false, 
+        message: "Broker IP is required" 
+      });
+    }
+
+    if (!isValidBrokerAddress(brokerIp)) {
+      return res.status(400).json({ 
+        connected: false, 
+        message: "Invalid broker IP address" 
+      });
+    }
+
+    // Check if broker exists in database and get its details
+    const broker = await Broker.findOne({ brokerIp });
+    
+    if (!broker) {
+      return res.status(200).json({ 
+        connected: false, 
+        message: "Broker not found in database" 
+      });
+    }
+
+    // Check if broker is currently connected
+    const key = `${userId}_${broker._id}`;
+    const mqttHandler = req.mqttHandlers.get(key);
+    
+    if (mqttHandler && mqttHandler.isConnected()) {
+      return res.status(200).json({ 
+        connected: true, 
+        message: "Broker is connected",
+        brokerId: broker._id,
+        connectionStatus: broker.connectionStatus
+      });
+    }
+
+    // Test connection to broker
+    const testBroker = {
+      _id: `test_${userId}_${Date.now()}`,
+      brokerIp: broker.brokerIp,
+      portNumber: broker.portNumber,
+      username: broker.username || "",
+      password: broker.password || "",
+    };
+
+    const mqttHandlerTest = new MqttHandler(userId, testBroker);
+    const connected = await mqttHandlerTest.testConnection(broker.portNumber);
+
+    res.status(200).json({ 
+      connected, 
+      message: connected ? "Broker is reachable" : "Broker is not reachable",
+      brokerId: broker._id,
+      connectionStatus: connected ? "connected" : "disconnected"
+    });
+
+  } catch (error) {
+    console.error(`[User: ${req.userId}] Error checking broker status: ${error.message}`);
+    res.status(500).json({
+      connected: false,
+      message: "Failed to check broker status",
+      error: error.message,
+    });
+  }
+});
+
 // Test broker availability
 router.post("/test-broker", authMiddleware, async (req, res) => {
   try {
