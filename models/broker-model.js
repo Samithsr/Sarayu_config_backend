@@ -14,6 +14,11 @@ const brokerSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  topic: {
+    type: String,
+    required: true,
+    default: '',
+  },
   connectionStatus: {
     type: String,
     default: 'disconnected',

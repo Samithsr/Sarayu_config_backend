@@ -44,40 +44,11 @@ router.post("/upload", upload.single("file"), (req, res) => {
   res.status(200).json({ success: true, message: "File uploaded successfully!" });
 });
 
-// Delete endpoint
-router.delete("/delete/:filename", (req, res) => {
-  try {
-    const filename = req.params.filename;
-    const filePath = path.join(__dirname, "../firmware", filename);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
-      return res.status(404).json({ success: false, message: "File not found" });
-    }
-
-    // Validate file extension
-    const ext = path.extname(filename).toLowerCase();
-    if (ext !== ".bin") {
-      console.error(`Invalid file type: ${filename}`);
-      return res.status(400).json({ success: false, message: "Only .bin files are allowed" });
-    }
-
-    // Delete the file
-    fs.unlinkSync(filePath);
-    console.log(`File deleted: ${filePath}`);
-    res.status(200).json({ success: true, message: `File ${filename} deleted successfully` });
-  } catch (error) {
-    console.error("Delete error:", error.message);
-    res.status(500).json({ success: false, message: `Delete error: ${error.message}` });
-  }
-});
-
 // Get all versions endpoint with dynamic IP
 router.get("/get-all-versions", (req, res) => {
   try {
     const { ip } = req.query; // Get IP from query parameter
-    const host = "3.110.131.251"; // Use server IP from middleware
+    const host = "192.168.137.214"; // Use server IP from middleware
     const dir = path.join(__dirname, "../firmware");
     const data = fs.readdirSync(dir, "utf-8");
     const result = data.map((item) => `http://${host}:5000/api/updates/${item}`);
@@ -217,3 +188,4 @@ router.use("/updates", (req, res, next) => {
 }, express.static(path.join(__dirname, "../firmware")));
 
 module.exports = router;
+
