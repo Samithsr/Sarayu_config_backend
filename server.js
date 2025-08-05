@@ -27,7 +27,7 @@ const io = new Server(server, {
 require("dotenv").config();
 const MQTT_USERNAME = process.env.MQTT_USERNAME || "Sarayu"; // Set in .env file
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "IOTteam@123"; // Set in .env file
-const SERVER_IP = process.env.SERVER_IP || "localhost"; // Set to 3.111.87.2 for external access
+const SERVER_IP = process.env.SERVER_IP || "13.203.94.252"; // Set to 3.111.87.2 for external access
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -95,7 +95,7 @@ app.use("/api", location);
 
 // Initialize MQTT Client
 const setupMqttClient = () => {
-  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883"; // Set in .env file
+  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://13.203.94.252:1883"; // Set in .env file
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
   const client = mqtt.connect(brokerUrl, {
     clientId,
@@ -134,7 +134,7 @@ setupMqttClient();
 
 // MongoDB Connection
 mongoose
-  .connect(process.env.MONGO_URI || "mongodb://localhost:27017/gateway")
+  .connect(process.env.MONGO_URI || "mongodb://13.203.94.252:27017/gateway")
   .then(() => {
     console.log("Database connection successful!");
     const PORT = process.env.PORT || 5000;
