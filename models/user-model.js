@@ -39,7 +39,7 @@ userSchema.methods.generateToken = function () {
   return jwt.sign(
     { _id: this._id, email: this.email, role: this.roles },
     process.env.JWT_SECRET || 'x-auth-token',
-    { expiresIn: '3d' }
+    { expiresIn: '7d' }
   );
 };
 
