@@ -35,7 +35,7 @@ const parseMqttError = async (error, userId, broker) => {
     ) {
       errors.push("Connection Ack timeout");
     } else {
-      errors.push("Not atuthrized");
+      errors.push("Not authorized");
     }
     return errors;
   }
@@ -649,62 +649,75 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async
     const { brokerIp, portNumber, username, password, label, topic } = req.body;
     console.log(`[User: ${req.userId}] Updating broker ${brokerId}`);
 
-    // Validate required fields
-    if (!brokerIp || !portNumber || !label || !topic) {
-      console.error(`[User: ${req.userId}] Missing required fields for broker ${brokerId}:`, {
-        brokerIp,
-        portNumber,
-        label,
-        topic,
-      });
-      return res.status(400).json({
-        message: "Broker IP, port, label, and topic are required",
-        validationErrors: ["Missing required fields"],
-      });
-    }
-
-    if (!isValidBrokerAddress(brokerIp)) {
-      console.error(`[User: ${req.userId}] Invalid broker address: ${brokerIp}`);
-      return res.status(400).json({
-        message: "Invalid broker address",
-        error: "Invalid broker address",
-        validationErrors: ["Invalid broker address"],
-      });
-    }
-
-    if (portNumber < 1 || portNumber > 65535) {
-      console.error(`[User: ${req.userId}] Invalid port number: ${portNumber}`);
-      return res.status(400).json({
-        message: "Invalid port number",
-        error: "Invalid port number",
-        validationErrors: ["Invalid port number"],
-      });
-    }
-
-    const broker = await Broker.findOne({ _id: brokerId, userId: req.userId });
+    const broker = await Broker.findById(brokerId);
     if (!broker) {
-      console.error(`[User: ${req.userId}] Broker ${brokerId} not found or not owned by user`);
+      console.error(`[User: ${req.userId}] Broker ${brokerId} not found`);
       return res.status(404).json({
-        message: "Broker not found or you lack permission",
+        message: "Broker not found",
         validationErrors: ["Broker not found"],
+      });
+    }
+
+    // Validate only provided fields
+    const validationErrors = [];
+
+    if (brokerIp !== undefined) {
+      if (!isValidBrokerAddress(brokerIp)) {
+        validationErrors.push("Invalid broker IP address");
+      } else {
+        broker.brokerIp = brokerIp;
+      }
+    }
+
+    if (portNumber !== undefined) {
+      if (portNumber < 1 || portNumber > 65535) {
+        validationErrors.push("Invalid port number");
+      } else {
+        broker.portNumber = parseInt(portNumber, 10);
+      }
+    }
+
+    if (username !== undefined) {
+      broker.username = username || "";
+    }
+
+    if (password !== undefined) {
+      broker.password = password || "";
+    }
+
+    if (label !== undefined) {
+      if (!label || label.trim() === "") {
+        validationErrors.push("Label is required");
+      } else {
+        broker.label = label;
+      }
+    }
+
+    if (topic !== undefined) {
+      if (!topic || topic.trim() === "") {
+        validationErrors.push("Topic name is required");
+      } else {
+        broker.topic = topic;
+      }
+    }
+
+    // If there are validation errors, return them
+    if (validationErrors.length > 0) {
+      console.error(`[User: ${req.userId}] Validation errors for broker ${brokerId}: ${validationErrors.join(", ")}`);
+      return res.status(400).json({
+        message: "Validation failed",
+        error: validationErrors.join(", "),
+        validationErrors,
+        connectionStatus: broker.connectionStatus,
       });
     }
 
     // Check if critical fields have changed
     const hasCriticalChanges =
-      broker.brokerIp !== brokerIp ||
-      broker.portNumber !== portNumber ||
-      broker.username !== (username || "") ||
-      broker.password !== (password || "");
-
-    // Update broker fields
-    broker.brokerIp = brokerIp;
-    broker.portNumber = portNumber;
-    broker.username = username || "";
-    broker.password = password || "";
-    broker.label = label || "Unnamed Broker";
-    broker.topic = topic || "";
-    broker.connectionStatus = hasCriticalChanges ? "disconnected" : broker.connectionStatus; // Preserve status if no critical changes
+      (brokerIp !== undefined && broker.brokerIp !== brokerIp) ||
+      (portNumber !== undefined && broker.portNumber !== parseInt(portNumber, 10)) ||
+      (username !== undefined && broker.username !== (username || "")) ||
+      (password !== undefined && broker.password !== (password || ""));
 
     // If critical fields changed, revalidate connection
     if (hasCriticalChanges) {
@@ -712,35 +725,35 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async
       const isBrokerAvailable = await mqttHandlerTest.testConnection(broker.portNumber);
       if (!isBrokerAvailable) {
         const errorMessage = mqttHandlerTest.connectionError || "Failed to establish MQTT connection";
-        let validationErrors = [];
-        
+        let mqttValidationErrors = [];
+
         if (errorMessage.includes("bad user name or password") || errorMessage.includes("not authorized")) {
-          validationErrors = ["Incorrect username or password"];
+          mqttValidationErrors = ["Incorrect username or password"];
         } else if (
           errorMessage.includes("connection refused") ||
           errorMessage.includes("ENOTFOUND") ||
           errorMessage.includes("ECONNREFUSED")
         ) {
-          validationErrors = ["Invalid broker IP or port"];
+          mqttValidationErrors = ["Invalid broker IP or port"];
         } else if (errorMessage.includes("connack timeout") || errorMessage.includes("timeout")) {
-          validationErrors = ["Connection timeout"];
+          mqttValidationErrors = ["Connection timeout"];
         } else {
-          validationErrors = ["Connection failed"];
+          mqttValidationErrors = ["Connection failed"];
         }
 
         const mqttErrors = await parseMqttError(new Error(errorMessage), req.userId, broker);
         if (mqttErrors.includes("Not authorized")) {
-          validationErrors = ["Incorrect username or password"];
+          mqttValidationErrors = ["Incorrect username or password"];
         }
 
         broker.connectionStatus = "disconnected";
-        broker.lastValidationError = validationErrors.join(", ");
+        broker.lastValidationError = mqttValidationErrors.join(", ");
         await broker.save();
-        console.log(`[User: ${req.userId}] Validation failed for broker ${brokerId}: ${validationErrors.join(", ")}`);
+        console.log(`[User: ${req.userId}] Validation failed for broker ${brokerId}: ${mqttValidationErrors.join(", ")}`);
         return res.status(400).json({
           message: "Failed to validate broker connection",
-          error: validationErrors.join(", "),
-          validationErrors,
+          error: mqttValidationErrors.join(", "),
+          validationErrors: mqttValidationErrors,
           connectionStatus: "disconnected",
         });
       }
@@ -757,35 +770,35 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async
         console.log(`[User: ${req.userId}] Reconnected broker ${brokerId} successfully`);
       } else {
         const errorMessage = mqttHandler.connectionError || "Failed to establish MQTT connection";
-        let validationErrors = [];
+        let mqttValidationErrors = [];
 
         if (errorMessage.includes("bad user name or password") || errorMessage.includes("not authorized")) {
-          validationErrors = ["Incorrect username or password"];
+          mqttValidationErrors = ["Incorrect username or password"];
         } else if (
           errorMessage.includes("connection refused") ||
           errorMessage.includes("ENOTFOUND") ||
           errorMessage.includes("ECONNREFUSED")
         ) {
-          validationErrors = ["Invalid broker IP or port"];
+          mqttValidationErrors = ["Invalid broker IP or port"];
         } else if (errorMessage.includes("connack timeout") || errorMessage.includes("timeout")) {
-          validationErrors = ["Connection timeout"];
+          mqttValidationErrors = ["Connection timeout"];
         } else {
-          validationErrors = ["Connection failed"];
+          mqttValidationErrors = ["Connection failed"];
         }
 
         const mqttErrors = await parseMqttError(new Error(errorMessage), req.userId, broker);
         if (mqttErrors.includes("Not authorized")) {
-          validationErrors = ["Incorrect username or password"];
+          mqttValidationErrors = ["Incorrect username or password"];
         }
 
         broker.connectionStatus = "disconnected";
-        broker.lastValidationError = validationErrors.join(", ");
-        console.log(`[User: ${req.userId}] Reconnection failed for broker ${brokerId}: ${validationErrors.join(", ")}`);
+        broker.lastValidationError = mqttValidationErrors.join(", ");
+        console.log(`[User: ${req.userId}] Reconnection failed for broker ${brokerId}: ${mqttValidationErrors.join(", ")}`);
         await broker.save();
         return res.status(400).json({
           message: "Failed to reconnect to broker",
-          error: validationErrors.join(", "),
-          validationErrors,
+          error: mqttValidationErrors.join(", "),
+          validationErrors: mqttValidationErrors,
           connectionStatus: "disconnected",
         });
       }
@@ -818,6 +831,7 @@ router.put("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async
     });
   }
 });
+
 // Delete broker
 router.delete("/brokers/:brokerId", authMiddleware, restrictToadmin("admin"), async (req, res) => {
   try {
@@ -962,8 +976,6 @@ router.post("/brokers/disconnect-all", authMiddleware, restrictToadmin("admin"),
       await broker.save();
       console.log(`[User: ${userId}] Broker ${broker._id} disconnected successfully`);
     }
-    // const result = await Broker.updateMany({},{$set : {assignedUserId : ""}})
-    //   console.log(result)
 
     res.status(200).json({ message: "All brokers disconnected successfully" });
   } catch (error) {
