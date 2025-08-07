@@ -48,7 +48,7 @@ router.post("/upload", upload.single("file"), (req, res) => {
 router.get("/get-all-versions", (req, res) => {
   try {
     const { ip } = req.query; // Get IP from query parameter
-    const host = "13.202.129.139"; // Use server IP from middleware
+    const host = "13.201.135.43"; // Use server IP from middleware
     const dir = path.join(__dirname, "../firmware");
     const data = fs.readdirSync(dir, "utf-8");
     const result = data.map((item) => `http://${host}:5000/api/updates/${item}`);

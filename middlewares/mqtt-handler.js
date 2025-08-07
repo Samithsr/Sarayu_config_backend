@@ -44,8 +44,8 @@ class MqttHandler {
       const brokerUrl = `mqtt://${this.broker.brokerIp}:${port}`;
       const options = {
         clientId,
-        username: this.broker.username || "",
-        password: this.broker.password || "",
+        username: this.broker.username || "Sarayu",
+        password: this.broker.password || "IOTteam@123",
         connectTimeout: 10000,
       };
 

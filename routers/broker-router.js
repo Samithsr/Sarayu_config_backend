@@ -14,7 +14,7 @@ const isValidBrokerAddress = (ip) => {
   }
   const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   const hostnameRegex = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,253}[a-zA-Z0-9]$/;
-  return ip === "localhost" || ipv4Regex.test(ip) || hostnameRegex.test(ip);
+  return ip === "13.201.135.43" || ipv4Regex.test(ip) || hostnameRegex.test(ip);
 };
 
 // Enhanced MQTT error parsing
