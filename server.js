@@ -94,14 +94,15 @@ app.use("/api", firmware);
 app.use("/api", location);
 
 // Initialize MQTT Client
-const setupMqttClient = () => {
-  const brokerUrl = process.env.MQTT_BROKER_URL || "mqtt://13.201.135.43:1883"; // Updated to AWS IP
+const setupMqttClient = (brokerIp = "13.201.135.43") => {
+  const brokerUrl = process.env.MQTT_BROKER_URL || `mqtt://${brokerIp}:1883`; // Use provided or default IP
   const clientId = `server_${Math.random().toString(16).slice(3)}`;
   const client = mqtt.connect(brokerUrl, {
     clientId,
-    username: "Sarayu",
-    password: "IOTteam@123",
+    username: MQTT_USERNAME,
+    password: MQTT_PASSWORD,
     connectTimeout: 5000,
+    reconnectPeriod: 1000, // Enable automatic reconnection with 1-second delay
   });
 
   client.on("connect", () => {
@@ -117,9 +118,7 @@ const setupMqttClient = () => {
 
   client.on("close", () => {
     console.log(`Disconnected from MQTT broker at ${brokerUrl}`);
-    mqttHandlers.delete(clientId);
-    connectedBrokers.delete(clientId);
-    console.log("MQTT client removed:", clientId);
+    // Do not remove from mqttHandlers or connectedBrokers to allow reconnection
   });
 
   client.on("reconnect", () => {
@@ -160,7 +159,7 @@ process.on("SIGINT", () => {
   console.log("Shutting down server...");
   mqttHandlers.forEach((handler, key) => {
     console.log(`Cleaning up MQTT handler for ${key}`);
-    handler.end();
+    handler.end(true); // Forcefully end the client
   });
   mqttHandlers.clear();
   connectedBrokers.clear();

@@ -152,32 +152,40 @@ router.post("/publish", async (req, res) => {
     let client;
     // Check if an authenticated client exists for this broker
     for (const [clientId, broker] of req.connectedBrokers) {
-      if (broker.url.includes(brokerIp)) {
+      // Safely check if broker.url exists and includes brokerIp
+      if (broker.url && broker.url.includes(brokerIp) && broker.client && !broker.client.reconnecting) {
         client = broker.client;
         break;
       }
     }
 
-    // If no existing client, create a new one with credentials
-    if (!client) {
+    // If no existing client or client is disconnected, create a new one
+    if (!client || client.ended || client.reconnecting) {
       const clientId = `publish_${Math.random().toString(16).slice(3)}`;
       client = mqtt.connect(`mqtt://${brokerIp}:1883`, {
         clientId,
         username: mqttUsername,
         password: mqttPassword,
         connectTimeout: 5000,
+        reconnectPeriod: 1000, // Enable automatic reconnection with 1-second delay
       });
 
       // Wait for connection
       await new Promise((resolve, reject) => {
         client.on("connect", () => {
-          console.log(`Connected to MQTT broker at ${brokerIp}:1883 for publish`);
+          console.log(`Connected to MQTT broker at ${brokerIp}:1883 for publish (clientId: ${clientId})`);
+          // Store the client in connectedBrokers
+          req.connectedBrokers.set(clientId, { client, url: `mqtt://${brokerIp}:1883` });
           resolve();
         });
         client.on("error", (error) => {
-          console.error("MQTT connection error:", error);
+          console.error(`MQTT connection error for ${brokerIp}:`, error.message);
           client.end();
           reject(error);
+        });
+        client.on("close", () => {
+          console.log(`MQTT client disconnected for ${brokerIp} (clientId: ${clientId})`);
+          // Do not remove from connectedBrokers here to allow reconnection
         });
       });
     }
@@ -186,16 +194,10 @@ router.post("/publish", async (req, res) => {
     await new Promise((resolve, reject) => {
       client.publish(topic, message, { qos: 0 }, (error) => {
         if (error) {
-          console.error("Publish error:", error);
-          if (!req.connectedBrokers.has(client.options.clientId)) {
-            client.end();
-          }
+          console.error(`Publish error for ${brokerIp} (topic: ${topic}):`, error.message);
           reject(error);
         } else {
           console.log(`Published URL "${message}" to topic "${topic}" on broker ${brokerIp}:1883`);
-          if (!req.connectedBrokers.has(client.options.clientId)) {
-            client.end();
-          }
           resolve();
         }
       });
@@ -203,7 +205,7 @@ router.post("/publish", async (req, res) => {
 
     res.status(200).json({ success: true, message: `Published URL "${message}" successfully` });
   } catch (error) {
-    console.error("Publish error:", error);
+    console.error("Publish error:", error.message);
     res.status(500).json({ success: false, message: `Publish error: ${error.message}` });
   }
 });
