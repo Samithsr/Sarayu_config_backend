@@ -134,7 +134,7 @@ setupMqttClient();
 
 // MongoDB Connection
 mongoose
-  .connect(process.env.MONGO_URI || "mongodb://13.201.135.43:27017/gateway")
+  .connect(process.env.MONGO_URI || "mongodb://13.201.135.43:27017/sami")
   .then(() => {
     console.log("Database connection successful!");
     const PORT = process.env.PORT || 5000;
